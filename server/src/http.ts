@@ -1,7 +1,12 @@
 import type { Hono } from "hono";
+import { existsSync } from "node:fs";
 import { dispatchVoiceAgent, deleteDispatch } from "./livekit.ts";
 import { getCurrentTarget, setCurrentTarget } from "./state.ts";
-import { existsSync } from "node:fs";
+import { getConfig, updateConfig, configPath } from "./config/store.ts";
+import { getSessionsSnapshot, pollOnce } from "./sessions/poller.ts";
+import { findSessionByFolder } from "./sessions/select.ts";
+import { spawnPiInFolder } from "./tmux/spawn.ts";
+import { publish, subscribe } from "./events/bus.ts";
 
 export function mountApi(app: Hono) {
   app.get("/api/health", (c) =>
@@ -11,12 +16,16 @@ export function mountApi(app: Hono) {
       uptime: process.uptime(),
       now: new Date().toISOString(),
       currentTarget: getCurrentTarget(),
+      configPath: configPath(),
     }),
   );
 
-  // Phase 2 will populate this from the rpc-socket poller.
-  app.get("/api/sessions", (c) => c.json([]));
-  app.post("/api/sessions/refresh", (c) => c.json([]));
+  app.get("/api/sessions", (c) => c.json(getSessionsSnapshot()));
+
+  app.post("/api/sessions/refresh", async (c) => {
+    const sessions = await pollOnce();
+    return c.json(sessions);
+  });
 
   app.post("/api/sessions/select", async (c) => {
     const body = await c.req.json().catch(() => ({}));
@@ -28,7 +37,6 @@ export function mountApi(app: Hono) {
       return c.json({ error: `socket does not exist: ${socketPath}` }, 404);
     }
 
-    // Tear down any existing target before starting a new one.
     const existing = getCurrentTarget();
     if (existing) {
       await deleteDispatch(existing.roomName, existing.dispatchId);
@@ -43,6 +51,7 @@ export function mountApi(app: Hono) {
         dispatchId: result.dispatchId,
         startedAt: Date.now(),
       });
+      publish({ type: "voice:state", data: { state: "dispatching", target: socketPath } });
       return c.json(result);
     } catch (err: any) {
       return c.json({ error: `dispatch failed: ${err.message}` }, 500);
@@ -54,28 +63,95 @@ export function mountApi(app: Hono) {
     if (!t) return c.json({ ok: true, alreadyEmpty: true });
     await deleteDispatch(t.roomName, t.dispatchId);
     setCurrentTarget(null);
+    publish({ type: "voice:state", data: { state: "released" } });
     return c.json({ ok: true });
   });
 
+  /**
+   * Resolve which session should be auto-selected on UI startup.
+   *   - If config.startup.defaultFolder is null → return { kind: "none" }.
+   *   - If a live session matches → return { kind: "match", session }.
+   *   - Else if spawnIfMissing → spawn one and wait for the socket.
+   *   - Else return { kind: "missing" }.
+   */
+  app.get("/api/sessions/default", async (c) => {
+    const cfg = getConfig();
+    const folder = cfg.startup.defaultFolder;
+    if (!folder) return c.json({ kind: "none" });
+
+    let sessions = getSessionsSnapshot();
+    if (sessions.length === 0) sessions = await pollOnce();
+    const match = findSessionByFolder(sessions, folder);
+    if (match) return c.json({ kind: "match", session: match });
+
+    if (!cfg.startup.spawnIfMissing) {
+      return c.json({ kind: "missing", folder });
+    }
+
+    try {
+      const newPath = await spawnPiInFolder({
+        tmuxSocketName: cfg.tmux.socketName,
+        spawnTmuxSession: cfg.startup.spawnTmuxSession,
+        socketsDir: cfg.pi.socketsDir,
+        folder,
+      });
+      // Force a poll so the new session lands in the snapshot.
+      const fresh = await pollOnce();
+      const session =
+        fresh.find((s) => s.socketPath === newPath) ?? null;
+      return c.json({ kind: "spawned", session, socketPath: newPath });
+    } catch (err: any) {
+      return c.json({ kind: "error", message: err.message }, 500);
+    }
+  });
+
+  app.get("/api/config", (c) => c.json(getConfig()));
+
+  app.put("/api/config", async (c) => {
+    const body = await c.req.json().catch(() => null);
+    if (!body || typeof body !== "object") {
+      return c.json({ error: "invalid body" }, 400);
+    }
+    const next = updateConfig(body);
+    publish({ type: "config:updated", data: next });
+    return c.json(next);
+  });
+
   app.get("/api/prompt", (c) => c.json({ path: null, body: "", mtime: null }));
-  app.put("/api/prompt", (c) => c.json({ error: "not implemented in phase 1" }, 501));
-  app.get("/api/config", (c) => c.json({}));
-  app.put("/api/config", (c) => c.json({ error: "not implemented in phase 1" }, 501));
+  app.put("/api/prompt", (c) => c.json({ error: "not implemented in phase 2" }, 501));
 
   app.get("/events", (c) => {
     const stream = new ReadableStream({
       start(controller) {
         const encoder = new TextEncoder();
         const send = (event: string, data: unknown) => {
-          controller.enqueue(
-            encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
-          );
+          try {
+            controller.enqueue(
+              encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
+            );
+          } catch {
+            // controller closed
+          }
         };
+
         send("hello", { ok: true, at: Date.now() });
-        const interval = setInterval(() => send("ping", { at: Date.now() }), 15000);
+        send("sessions:update", getSessionsSnapshot());
+        send("config:updated", getConfig());
+
+        const unsubscribe = subscribe((event) => {
+          send(event.type, event.data);
+        });
+
+        const ping = setInterval(() => send("ping", { at: Date.now() }), 15000);
+
         c.req.raw.signal.addEventListener("abort", () => {
-          clearInterval(interval);
-          controller.close();
+          clearInterval(ping);
+          unsubscribe();
+          try {
+            controller.close();
+          } catch {
+            // already closed
+          }
         });
       },
     });

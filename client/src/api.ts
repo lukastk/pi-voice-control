@@ -1,3 +1,5 @@
+import type { PiSession } from "./types.ts";
+
 export type DispatchResult = {
   roomName: string;
   token: string;
@@ -5,24 +7,54 @@ export type DispatchResult = {
   dispatchId: string;
 };
 
-export async function selectSession(socketPath: string): Promise<DispatchResult> {
-  const res = await fetch("/api/sessions/select", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ socketPath }),
-  });
+export type Config = {
+  tmux: { socketName: string };
+  pi: { socketsDir: string; pollIntervalMs: number; staleSocketAfterMs: number };
+  startup: {
+    defaultFolder: string | null;
+    spawnIfMissing: boolean;
+    spawnTmuxSession: string;
+  };
+};
+
+export type DefaultResolution =
+  | { kind: "none" }
+  | { kind: "match"; session: PiSession }
+  | { kind: "missing"; folder: string }
+  | { kind: "spawned"; session: PiSession | null; socketPath: string }
+  | { kind: "error"; message: string };
+
+async function jsonFetch<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
+  const res = await fetch(input, init);
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`select failed (${res.status}): ${text}`);
+    const body = await res.text().catch(() => "");
+    throw new Error(`${res.status} ${res.statusText}: ${body}`);
   }
-  return (await res.json()) as DispatchResult;
+  return (await res.json()) as T;
 }
 
-export async function releaseSession(): Promise<void> {
-  await fetch("/api/sessions/release", { method: "POST" });
-}
+export const api = {
+  health: () => jsonFetch<{ ok: boolean }>("/api/health"),
 
-export async function fetchHealth(): Promise<{ ok: boolean }> {
-  const res = await fetch("/api/health");
-  return await res.json();
-}
+  listSessions: () => jsonFetch<PiSession[]>("/api/sessions"),
+  refreshSessions: () =>
+    jsonFetch<PiSession[]>("/api/sessions/refresh", { method: "POST" }),
+  resolveDefault: () => jsonFetch<DefaultResolution>("/api/sessions/default"),
+
+  selectSession: (socketPath: string) =>
+    jsonFetch<DispatchResult>("/api/sessions/select", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ socketPath }),
+    }),
+  releaseSession: () =>
+    jsonFetch<{ ok: boolean }>("/api/sessions/release", { method: "POST" }),
+
+  getConfig: () => jsonFetch<Config>("/api/config"),
+  putConfig: (patch: any) =>
+    jsonFetch<Config>("/api/config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    }),
+};

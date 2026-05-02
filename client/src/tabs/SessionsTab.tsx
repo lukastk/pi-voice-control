@@ -1,109 +1,203 @@
-import { useState } from "react";
-import { selectSession, releaseSession } from "../api.ts";
-import { connectVoice, type VoiceHandle, type VoiceState } from "../livekit.ts";
+import { useMemo } from "react";
+import type { PiSession } from "../types.ts";
+import type { Config } from "../api.ts";
+import type { useVoice } from "../voice.ts";
 
-export function SessionsTab() {
-  const [socketPath, setSocketPath] = useState<string>("");
-  const [state, setState] = useState<VoiceState>("idle");
-  const [handle, setHandle] = useState<VoiceHandle | null>(null);
-  const [log, setLog] = useState<string[]>([]);
+type Props = {
+  sessions: PiSession[];
+  config: Config | null;
+  voice: ReturnType<typeof useVoice>;
+  onRefresh: () => Promise<void>;
+};
 
-  const append = (line: string) =>
-    setLog((prev) => [...prev.slice(-50), `${new Date().toLocaleTimeString()}  ${line}`]);
+function realpathLikeEqual(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!a || !b) return false;
+  // Approximate; the *server* does the realpath comparison authoritatively.
+  // Client just normalizes trailing slashes and decoded characters.
+  return a.replace(/\/+$/, "") === b.replace(/\/+$/, "");
+}
 
-  async function onConnect() {
-    if (!socketPath.trim()) return;
-    setState("connecting");
-    append(`selecting ${socketPath}…`);
-    try {
-      const dispatch = await selectSession(socketPath.trim());
-      append(`dispatched: room=${dispatch.roomName}`);
-      const h = await connectVoice(dispatch, append);
-      setHandle(h);
-      setState("connected");
-    } catch (err: any) {
-      append(`error: ${err.message}`);
-      setState("error");
-    }
-  }
+export function SessionsTab({ sessions, config, voice, onRefresh }: Props) {
+  const defaultFolder = config?.startup.defaultFolder ?? null;
 
-  async function onDisconnect() {
-    append("disconnecting…");
-    if (handle) await handle.disconnect();
-    await releaseSession();
-    setHandle(null);
-    setState("idle");
-    append("disconnected");
-  }
+  const sorted = useMemo(() => {
+    const matches = (s: PiSession) =>
+      defaultFolder ? realpathLikeEqual(s.cwd, defaultFolder) : false;
+    return [...sessions].sort((a, b) => {
+      const am = matches(a) ? 0 : 1;
+      const bm = matches(b) ? 0 : 1;
+      if (am !== bm) return am - bm;
+      return b.lastSeen - a.lastSeen;
+    });
+  }, [sessions, defaultFolder]);
 
   return (
-    <div className="placeholder" style={{ padding: 20 }}>
-      <h2>Sessions (Phase 1 — manual)</h2>
-      <p style={{ marginBottom: 12 }}>
-        Phase 2 auto-discovers Pi sockets. For now, paste a socket path from{" "}
-        <code>ls /tmp/pi-rpc-sockets/</code>.
-      </p>
+    <div style={{ padding: 16 }}>
+      <header style={{ display: "flex", alignItems: "center", marginBottom: 12 }}>
+        <h2 style={{ fontSize: 14, color: "#c0c0d0", flex: 1 }}>
+          Pi sessions ({sessions.length})
+        </h2>
+        <button onClick={() => onRefresh()} style={btnGhost}>
+          Refresh
+        </button>
+      </header>
 
-      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
-        <input
-          type="text"
-          value={socketPath}
-          placeholder="/tmp/pi-rpc-sockets/<uuid>.sock"
-          onChange={(e) => setSocketPath(e.target.value)}
-          disabled={state === "connecting" || state === "connected"}
-          style={{
-            flex: 1,
-            minWidth: 260,
-            padding: "6px 10px",
-            background: "#0d0d1a",
-            color: "#e6e6f0",
-            border: "1px solid #2a2a40",
-            borderRadius: 4,
-            fontFamily: "'SF Mono', monospace",
-            fontSize: 12,
-          }}
-        />
-        {state !== "connected" ? (
-          <button
-            onClick={onConnect}
-            disabled={state === "connecting" || !socketPath.trim()}
-            style={btnStyle(state === "connecting" ? "#444" : "#5a57b3")}
+      {sessions.length === 0 ? (
+        <Empty config={config} />
+      ) : (
+        <ul style={{ listStyle: "none", display: "flex", flexDirection: "column", gap: 8 }}>
+          {sorted.map((s) => {
+            const isCurrent = voice.state.kind === "connected" && voice.state.socketPath === s.socketPath;
+            const isMatch = defaultFolder ? realpathLikeEqual(s.cwd, defaultFolder) : false;
+            return (
+              <li key={s.sessionId} style={rowStyle(isCurrent, isMatch)}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontFamily: "'SF Mono', monospace", fontSize: 13, color: "#e6e6f0" }}>
+                    {s.cwd ?? <span style={{ color: "#666" }}>(no cwd — older Pi)</span>}
+                    {isMatch && (
+                      <span style={badgeStyle("#2a4a8a", "#a8c8ff")}>default</span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 11, color: "#9090a8", marginTop: 4 }}>
+                    {s.tmux.inTmux ? (
+                      <>
+                        tmux:{" "}
+                        <code>
+                          {s.tmux.session}:{s.tmux.windowIndex}.{s.tmux.paneIndex}
+                        </code>{" "}
+                        ({s.tmux.window})
+                      </>
+                    ) : (
+                      <span style={{ color: "#666" }}>not in tmux</span>
+                    )}
+                    {" · "}
+                    <span style={{ color: s.state.idle ? "#7a7" : "#fa5" }}>
+                      {s.state.idle ? "idle" : "busy"}
+                    </span>
+                    {s.state.contextUsage != null && (
+                      <>
+                        {" · "}
+                        ctx {s.state.contextUsage.percent}%
+                      </>
+                    )}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 10,
+                      color: "#555",
+                      fontFamily: "'SF Mono', monospace",
+                      marginTop: 4,
+                    }}
+                  >
+                    {s.socketPath}
+                  </div>
+                </div>
+                <div>
+                  {isCurrent ? (
+                    <button onClick={() => voice.disconnect()} style={btnDanger}>
+                      Disconnect
+                    </button>
+                  ) : (
+                    <button onClick={() => voice.connect(s.socketPath)} style={btnPrimary}>
+                      Connect voice
+                    </button>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {voice.log.length > 0 && (
+        <details style={{ marginTop: 16 }}>
+          <summary style={{ fontSize: 12, color: "#9090a8", cursor: "pointer" }}>
+            Voice log ({voice.log.length})
+          </summary>
+          <pre
+            style={{
+              background: "#0d0d1a",
+              padding: 10,
+              borderRadius: 4,
+              fontFamily: "'SF Mono', monospace",
+              fontSize: 11,
+              maxHeight: 220,
+              overflowY: "auto",
+              color: "#9090a8",
+              marginTop: 6,
+            }}
           >
-            {state === "connecting" ? "Connecting…" : "Connect voice"}
-          </button>
-        ) : (
-          <button onClick={onDisconnect} style={btnStyle("#a33")}>
-            Disconnect
-          </button>
-        )}
-      </div>
-
-      <div
-        style={{
-          background: "#0d0d1a",
-          padding: 10,
-          borderRadius: 4,
-          fontFamily: "'SF Mono', monospace",
-          fontSize: 11,
-          maxHeight: 240,
-          overflowY: "auto",
-          color: "#9090a8",
-        }}
-      >
-        {log.length === 0 ? <div>(no events yet)</div> : log.map((l, i) => <div key={i}>{l}</div>)}
-      </div>
+            {voice.log.join("\n")}
+          </pre>
+        </details>
+      )}
     </div>
   );
 }
 
-function btnStyle(bg: string): React.CSSProperties {
+function Empty({ config }: { config: Config | null }) {
+  return (
+    <div style={{ color: "#888", fontSize: 13, lineHeight: 1.6 }}>
+      <p>No live Pi sessions found in <code>{config?.pi.socketsDir ?? "/tmp/pi-rpc-sockets"}</code>.</p>
+      <p style={{ marginTop: 8 }}>
+        Start one in tmux:
+        <br />
+        <code style={{ display: "block", marginTop: 6, padding: "8px 10px", background: "#0d0d1a", borderRadius: 4 }}>
+          tmux -L {config?.tmux.socketName ?? "mysystem"} new-session -s pi pi
+        </code>
+      </p>
+      {config?.startup.defaultFolder && (
+        <p style={{ marginTop: 8 }}>
+          Default folder is <code>{config.startup.defaultFolder}</code>. If <code>spawnIfMissing</code> is on, the
+          server can start one for you on first load.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function rowStyle(isCurrent: boolean, isMatch: boolean): React.CSSProperties {
   return {
-    padding: "6px 16px",
-    background: bg,
-    color: "#fff",
-    border: "none",
-    borderRadius: 4,
-    cursor: "pointer",
-    fontSize: 13,
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    padding: "12px 14px",
+    background: isCurrent ? "#1a3a2e" : "#0d0d1a",
+    border: `1px solid ${isCurrent ? "#3a7a4a" : isMatch ? "#3a4a7a" : "#222238"}`,
+    borderRadius: 6,
   };
 }
+
+function badgeStyle(bg: string, fg: string): React.CSSProperties {
+  return {
+    marginLeft: 8,
+    padding: "1px 6px",
+    background: bg,
+    color: fg,
+    fontSize: 10,
+    borderRadius: 3,
+    verticalAlign: "1px",
+  };
+}
+
+const btnPrimary: React.CSSProperties = {
+  padding: "6px 14px",
+  background: "#5a57b3",
+  color: "#fff",
+  border: "none",
+  borderRadius: 4,
+  cursor: "pointer",
+  fontSize: 12,
+};
+
+const btnDanger: React.CSSProperties = { ...btnPrimary, background: "#a33" };
+
+const btnGhost: React.CSSProperties = {
+  padding: "4px 10px",
+  background: "transparent",
+  color: "#9090a8",
+  border: "1px solid #2a2a40",
+  borderRadius: 4,
+  cursor: "pointer",
+  fontSize: 11,
+};

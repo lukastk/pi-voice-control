@@ -3,12 +3,22 @@ import { serveStatic } from "hono/bun";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
 import { mountApi } from "./http.ts";
+import { loadConfig, configPath } from "./config/store.ts";
+import { startPoller } from "./sessions/poller.ts";
 
 const PORT = Number(process.env.PORT ?? 7890);
 const BIND = process.env.BIND ?? "0.0.0.0";
 
 const repoRoot = join(import.meta.dir, "..", "..");
 const clientDist = join(repoRoot, "client", "dist");
+
+const cfg = loadConfig();
+console.log(`[server] config: ${configPath()}`);
+console.log(`[server] tmux socket: ${cfg.tmux.socketName}`);
+console.log(`[server] sockets dir: ${cfg.pi.socketsDir}`);
+console.log(`[server] default folder: ${cfg.startup.defaultFolder ?? "(none)"}`);
+
+startPoller();
 
 const app = new Hono();
 

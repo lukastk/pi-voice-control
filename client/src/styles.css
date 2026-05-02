@@ -73,6 +73,28 @@ body,
   color: #888;
 }
 
+.voice-badge {
+  font-size: 11px;
+  margin-right: 10px;
+  color: #888;
+}
+
+.voice-connected {
+  color: #00cc66;
+}
+
+.voice-connecting {
+  color: #ffaa00;
+}
+
+code {
+  background: #0d0d1a;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 11px;
+}
+
 .content {
   flex: 1;
   min-height: 0;
