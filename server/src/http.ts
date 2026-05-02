@@ -13,6 +13,11 @@ import { findSessionByFolder } from "./sessions/select.ts";
 import { spawnPiInFolder } from "./tmux/spawn.ts";
 import { switchClientTo, targetForSession } from "./tmux/focus.ts";
 import { publish, subscribe } from "./events/bus.ts";
+import { readPrompt, writePrompt, resetPromptToDefault } from "./prompt/file.ts";
+import {
+  appendSystemPromptToSocket,
+  clearSystemPromptOnSocket,
+} from "./prompt/inject.ts";
 
 const WTERM_PORT = Number(process.env.WTERM_PORT ?? 7891);
 
@@ -60,8 +65,18 @@ export function mountApi(app: Hono) {
       setCurrentTarget(null);
     }
 
+    let appendedPrompt: string | undefined;
     try {
-      const result = await dispatchVoiceAgent({ socketPath });
+      appendedPrompt = readPrompt().body;
+    } catch (err) {
+      console.error("[prompt] read failed; falling back to worker default:", err);
+    }
+
+    try {
+      const result = await dispatchVoiceAgent({
+        socketPath,
+        appendSystemPrompt: appendedPrompt,
+      });
       setCurrentTarget({
         socketPath,
         roomName: result.roomName,
@@ -145,8 +160,55 @@ export function mountApi(app: Hono) {
     return c.json(next);
   });
 
-  app.get("/api/prompt", (c) => c.json({ path: null, body: "", mtime: null }));
-  app.put("/api/prompt", (c) => c.json({ error: "not implemented in phase 2" }, 501));
+  app.get("/api/prompt", (c) => {
+    try {
+      return c.json(readPrompt());
+    } catch (err: any) {
+      return c.json({ error: err.message }, 500);
+    }
+  });
+
+  app.put("/api/prompt", async (c) => {
+    const body = await c.req.json().catch(() => null);
+    if (!body || typeof body.body !== "string") {
+      return c.json({ error: "body required" }, 400);
+    }
+    const snap = writePrompt(body.body);
+    publish({ type: "prompt:updated", data: snap });
+
+    // Live re-inject to the current voice target so the next agent turn uses
+    // the updated prompt. Pi's rpc-socket extension applies appendSystemPrompt
+    // via before_agent_start, so the in-flight turn (if any) keeps its
+    // current prompt; the next turn picks up the new one.
+    const t = getCurrentTarget();
+    let injected: { ok: boolean; error?: string } | null = null;
+    if (t) injected = await appendSystemPromptToSocket(t.socketPath, snap.body);
+    return c.json({ ...snap, injected });
+  });
+
+  app.post("/api/prompt/reinject", async (c) => {
+    const t = getCurrentTarget();
+    if (!t) return c.json({ ok: false, error: "no current voice target" }, 409);
+    const snap = readPrompt();
+    const result = await appendSystemPromptToSocket(t.socketPath, snap.body);
+    return c.json({ ...snap, injected: result });
+  });
+
+  app.post("/api/prompt/reset", async (c) => {
+    const snap = resetPromptToDefault();
+    publish({ type: "prompt:updated", data: snap });
+    const t = getCurrentTarget();
+    let injected: { ok: boolean; error?: string } | null = null;
+    if (t) injected = await appendSystemPromptToSocket(t.socketPath, snap.body);
+    return c.json({ ...snap, injected });
+  });
+
+  app.post("/api/prompt/clear", async (c) => {
+    const t = getCurrentTarget();
+    if (!t) return c.json({ ok: false, error: "no current voice target" }, 409);
+    const result = await clearSystemPromptOnSocket(t.socketPath);
+    return c.json(result);
+  });
 
   app.get("/events", (c) => {
     const stream = new ReadableStream({
@@ -166,6 +228,11 @@ export function mountApi(app: Hono) {
         send("sessions:update", getSessionsSnapshot());
         send("config:updated", getConfig());
         send("term:pin", { pinned: getPinned() });
+        try {
+          send("prompt:updated", readPrompt());
+        } catch {
+          // ignore — file unreadable on first open is fine
+        }
 
         const unsubscribe = subscribe((event) => {
           send(event.type, event.data);

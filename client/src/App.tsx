@@ -77,7 +77,9 @@ export function App() {
             onRefresh={server.refreshSessions}
           />
         )}
-        {tab === "prompt" && <PromptTab />}
+        {tab === "prompt" && (
+          <PromptTab prompt={server.prompt} voiceConnected={voice.state.kind === "connected"} />
+        )}
         {tab === "settings" && <SettingsTab config={server.config} />}
       </main>
     </div>

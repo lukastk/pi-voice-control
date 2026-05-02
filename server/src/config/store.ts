@@ -22,6 +22,10 @@ export type Config = {
     spawnIfMissing: boolean;
     spawnTmuxSession: string;
   };
+  prompt: {
+    filePath: string; // tilde expanded at read-time
+    clearOnSwitch: boolean;
+  };
 };
 
 export const DEFAULTS: Config = {
@@ -35,6 +39,10 @@ export const DEFAULTS: Config = {
     defaultFolder: null,
     spawnIfMissing: true,
     spawnTmuxSession: "voice-bridge-pi",
+  },
+  prompt: {
+    filePath: "~/.pi/agent/AGENTS.voice.md",
+    clearOnSwitch: false,
   },
 };
 

@@ -69,4 +69,33 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),
     }),
+
+  getPrompt: () => jsonFetch<PromptSnapshot>("/api/prompt"),
+  putPrompt: (body: string) =>
+    jsonFetch<PromptSnapshot & { injected: { ok: boolean; error?: string } | null }>(
+      "/api/prompt",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body }),
+      },
+    ),
+  reinjectPrompt: () =>
+    jsonFetch<PromptSnapshot & { injected: { ok: boolean; error?: string } }>(
+      "/api/prompt/reinject",
+      { method: "POST" },
+    ),
+  resetPrompt: () =>
+    jsonFetch<PromptSnapshot & { injected: { ok: boolean; error?: string } | null }>(
+      "/api/prompt/reset",
+      { method: "POST" },
+    ),
+  clearPromptOnTarget: () =>
+    jsonFetch<{ ok: boolean; error?: string }>("/api/prompt/clear", { method: "POST" }),
+};
+
+export type PromptSnapshot = {
+  path: string;
+  body: string;
+  mtime: number;
 };
