@@ -1,0 +1,16 @@
+{
+  "name": "@voice-agent-bridge/wterm",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun ./build.mjs",
+    "start": "node --preserve-symlinks --preserve-symlinks-main server.mjs"
+  },
+  "dependencies": {
+    "@wterm/core": "^0.1.9",
+    "@wterm/dom": "^0.1.9",
+    "esbuild": "^0.25.0",
+    "node-pty": "^1.0.0",
+    "ws": "^8.18.2"
+  }
+}

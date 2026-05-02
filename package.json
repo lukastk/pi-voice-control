@@ -5,7 +5,8 @@
   "workspaces": [
     "server",
     "worker",
-    "client"
+    "client",
+    "wterm"
   ],
   "scripts": {
     "start": "bin/start.sh",

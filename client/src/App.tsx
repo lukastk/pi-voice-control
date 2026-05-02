@@ -66,7 +66,9 @@ export function App() {
         </span>
       </nav>
       <main className="content">
-        {tab === "terminal" && <TerminalTab />}
+        <div style={{ display: tab === "terminal" ? "block" : "none", height: "100%" }}>
+          <TerminalTab termPort={server.termPort} termPinned={server.termPinned} />
+        </div>
         {tab === "sessions" && (
           <SessionsTab
             sessions={server.sessions}

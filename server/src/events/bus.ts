@@ -6,6 +6,7 @@ export type ServerEvent =
   | { type: "sessions:update"; data: unknown }
   | { type: "config:updated"; data: unknown }
   | { type: "voice:state"; data: unknown }
+  | { type: "term:pin"; data: { pinned: boolean } }
   | { type: "error"; data: { code: string; message: string } };
 
 type Listener = (event: ServerEvent) => void;

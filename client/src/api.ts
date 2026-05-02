@@ -33,8 +33,20 @@ async function jsonFetch<T>(input: RequestInfo, init?: RequestInit): Promise<T> 
   return (await res.json()) as T;
 }
 
+export type Health = {
+  ok: boolean;
+  term?: { port: number; pinned: boolean };
+};
+
 export const api = {
-  health: () => jsonFetch<{ ok: boolean }>("/api/health"),
+  health: () => jsonFetch<Health>("/api/health"),
+
+  setPin: (pin: boolean) =>
+    jsonFetch<{ ok: boolean; pinned: boolean }>("/api/term/pin", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pin }),
+    }),
 
   listSessions: () => jsonFetch<PiSession[]>("/api/sessions"),
   refreshSessions: () =>

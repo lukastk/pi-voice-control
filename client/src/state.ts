@@ -6,6 +6,8 @@ export type ServerState = {
   health: "unknown" | "ok" | "down";
   sessions: PiSession[];
   config: Config | null;
+  termPort: number;
+  termPinned: boolean;
 };
 
 export function useServerState(): ServerState & {
@@ -15,6 +17,8 @@ export function useServerState(): ServerState & {
     health: "unknown",
     sessions: [],
     config: null,
+    termPort: 7891,
+    termPinned: false,
   });
   const esRef = useRef<EventSource | null>(null);
 
@@ -24,7 +28,14 @@ export function useServerState(): ServerState & {
     Promise.all([api.health(), api.listSessions(), api.getConfig()])
       .then(([h, sessions, config]) => {
         if (cancelled) return;
-        setState({ health: h.ok ? "ok" : "down", sessions, config });
+        setState((prev) => ({
+          ...prev,
+          health: h.ok ? "ok" : "down",
+          sessions,
+          config,
+          termPort: h.term?.port ?? prev.termPort,
+          termPinned: h.term?.pinned ?? prev.termPinned,
+        }));
       })
       .catch(() => {
         if (cancelled) return;
@@ -45,6 +56,14 @@ export function useServerState(): ServerState & {
       try {
         const data = JSON.parse(e.data) as Config;
         setState((prev) => ({ ...prev, config: data }));
+      } catch {
+        // ignore
+      }
+    });
+    es.addEventListener("term:pin", (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data) as { pinned: boolean };
+        setState((prev) => ({ ...prev, termPinned: data.pinned }));
       } catch {
         // ignore
       }

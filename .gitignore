@@ -9,6 +9,7 @@ dist/
 client/dist/
 server/dist/
 worker/dist/
+wterm/dist/
 *.tsbuildinfo
 
 # Local config (real config lives in ~/.config/voice-agent-bridge/)

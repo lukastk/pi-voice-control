@@ -1,6 +1,5 @@
 /**
- * Single-user, single-active-target state. Multi-session support is a later
- * phase concern; for now Phase 1 only tracks one voice target at a time.
+ * Single-user, single-active-target state.
  */
 export type VoiceTarget = {
   socketPath: string;
@@ -10,6 +9,7 @@ export type VoiceTarget = {
 };
 
 let current: VoiceTarget | null = null;
+let pinned = false;
 
 export function getCurrentTarget(): VoiceTarget | null {
   return current;
@@ -17,4 +17,16 @@ export function getCurrentTarget(): VoiceTarget | null {
 
 export function setCurrentTarget(t: VoiceTarget | null) {
   current = t;
+}
+
+/**
+ * When pinned, the wterm view stops following voice-target switches.
+ * The user explicitly toggles this from the Terminal tab.
+ */
+export function getPinned(): boolean {
+  return pinned;
+}
+
+export function setPinned(p: boolean) {
+  pinned = p;
 }

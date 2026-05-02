@@ -1,12 +1,20 @@
 import type { Hono } from "hono";
 import { existsSync } from "node:fs";
 import { dispatchVoiceAgent, deleteDispatch } from "./livekit.ts";
-import { getCurrentTarget, setCurrentTarget } from "./state.ts";
+import {
+  getCurrentTarget,
+  setCurrentTarget,
+  getPinned,
+  setPinned,
+} from "./state.ts";
 import { getConfig, updateConfig, configPath } from "./config/store.ts";
 import { getSessionsSnapshot, pollOnce } from "./sessions/poller.ts";
 import { findSessionByFolder } from "./sessions/select.ts";
 import { spawnPiInFolder } from "./tmux/spawn.ts";
+import { switchClientTo, targetForSession } from "./tmux/focus.ts";
 import { publish, subscribe } from "./events/bus.ts";
+
+const WTERM_PORT = Number(process.env.WTERM_PORT ?? 7891);
 
 export function mountApi(app: Hono) {
   app.get("/api/health", (c) =>
@@ -17,8 +25,17 @@ export function mountApi(app: Hono) {
       now: new Date().toISOString(),
       currentTarget: getCurrentTarget(),
       configPath: configPath(),
+      term: { port: WTERM_PORT, pinned: getPinned() },
     }),
   );
+
+  app.post("/api/term/pin", async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    const pin = !!body.pin;
+    setPinned(pin);
+    publish({ type: "term:pin", data: { pinned: pin } });
+    return c.json({ ok: true, pinned: pin });
+  });
 
   app.get("/api/sessions", (c) => c.json(getSessionsSnapshot()));
 
@@ -52,6 +69,17 @@ export function mountApi(app: Hono) {
         startedAt: Date.now(),
       });
       publish({ type: "voice:state", data: { state: "dispatching", target: socketPath } });
+
+      // wterm follow: move the active tmux client to this session's pane,
+      // unless the user has pinned the terminal view.
+      if (!getPinned()) {
+        const session = getSessionsSnapshot().find((s) => s.socketPath === socketPath);
+        const target = session ? targetForSession(session) : null;
+        if (target) {
+          switchClientTo(getConfig().tmux.socketName, target);
+        }
+      }
+
       return c.json(result);
     } catch (err: any) {
       return c.json({ error: `dispatch failed: ${err.message}` }, 500);
@@ -137,6 +165,7 @@ export function mountApi(app: Hono) {
         send("hello", { ok: true, at: Date.now() });
         send("sessions:update", getSessionsSnapshot());
         send("config:updated", getConfig());
+        send("term:pin", { pinned: getPinned() });
 
         const unsubscribe = subscribe((event) => {
           send(event.type, event.data);
