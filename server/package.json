@@ -1,0 +1,18 @@
+{
+  "name": "@voice-agent-bridge/server",
+  "private": true,
+  "type": "module",
+  "main": "src/main.ts",
+  "scripts": {
+    "dev": "bun --hot src/main.ts",
+    "start": "bun src/main.ts"
+  },
+  "dependencies": {
+    "hono": "^4.6.14",
+    "livekit-server-sdk": "^2.14.1"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.14",
+    "typescript": "^5.7.2"
+  }
+}

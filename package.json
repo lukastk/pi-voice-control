@@ -1,0 +1,21 @@
+{
+  "name": "voice-agent-bridge",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "server",
+    "worker",
+    "client"
+  ],
+  "scripts": {
+    "start": "bin/start.sh",
+    "build": "cd client && bun run build",
+    "dev:server": "cd server && bun --hot src/main.ts",
+    "dev:worker": "cd worker && bun src/agent.ts dev",
+    "dev:client": "cd client && bun run dev"
+  },
+  "engines": {
+    "bun": ">=1.3.0",
+    "node": ">=20.0.0"
+  }
+}

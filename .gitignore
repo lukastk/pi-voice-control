@@ -1,0 +1,20 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+.env
+.env.local
+
+# Build artefacts
+client/dist/
+server/dist/
+worker/dist/
+*.tsbuildinfo
+
+# Local config (real config lives in ~/.config/voice-agent-bridge/)
+config.local.json
+
+# OS / editor
+.idea/
+.vscode/
+*.swp
