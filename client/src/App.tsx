@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { TerminalTab } from "./tabs/TerminalTab.tsx";
 import { SessionsTab } from "./tabs/SessionsTab.tsx";
 import { PromptTab } from "./tabs/PromptTab.tsx";
@@ -20,27 +20,37 @@ export function App() {
   const [tab, setTab] = useState<TabId>("sessions");
   const server = useServerState();
   const voice = useVoice();
-  const [autoTried, setAutoTried] = useState(false);
+  const [resolveStatus, setResolveStatus] = useState<string | null>(null);
+  const lastResolvedFolder = useRef<string | null | undefined>(undefined);
 
-  // Resolve default folder once, after config has loaded.
+  // Resolve default folder whenever it changes (including initial load and
+  // any later edit via Settings). Triggers a spawn if spawnIfMissing is on.
   useEffect(() => {
-    if (autoTried || !server.config) return;
-    if (!server.config.startup.defaultFolder) {
-      setAutoTried(true);
+    if (!server.config) return;
+    const folder = server.config.startup.defaultFolder;
+    if (folder === lastResolvedFolder.current) return;
+    lastResolvedFolder.current = folder;
+    if (!folder) {
+      setResolveStatus(null);
       return;
     }
-    setAutoTried(true);
-    api.resolveDefault().then((res) => {
-      if (res.kind === "match" || res.kind === "spawned") {
-        if (res.session) {
-          // Pre-highlight only — don't auto-connect (user preference).
-          // The Sessions tab visually marks the matching session as default.
+    setResolveStatus(`resolving ${folder}…`);
+    api.resolveDefault()
+      .then((res) => {
+        if (res.kind === "match") {
+          setResolveStatus(`matched existing session in ${folder}`);
+        } else if (res.kind === "spawned") {
+          setResolveStatus(`spawned new Pi in ${folder}`);
+        } else if (res.kind === "missing") {
+          setResolveStatus(`no session in ${folder} (spawn-if-missing is off)`);
+        } else if (res.kind === "error") {
+          setResolveStatus(`spawn failed: ${res.message}`);
+        } else {
+          setResolveStatus(null);
         }
-      }
-    }).catch(() => {
-      // ignore — error surfaces in Sessions tab via the event log
-    });
-  }, [server.config, autoTried]);
+      })
+      .catch((err) => setResolveStatus(`error: ${err.message}`));
+  }, [server.config]);
 
   return (
     <div className="app">
@@ -75,6 +85,7 @@ export function App() {
             config={server.config}
             voice={voice}
             onRefresh={server.refreshSessions}
+            resolveStatus={resolveStatus}
           />
         )}
         {tab === "prompt" && (

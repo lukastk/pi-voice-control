@@ -87,13 +87,16 @@ export function mountApi(app: Hono) {
       });
       publish({ type: "voice:state", data: { state: "dispatching", target: socketPath } });
 
-      // wterm follow: move the active tmux client to this session's pane,
-      // unless the user has pinned the terminal view.
+      // wterm follow: move the wterm pty's tmux client to this session's
+      // pane, unless the user has pinned the terminal view. Goes through
+      // the wterm subprocess's /_switch endpoint so we can target the right
+      // client when multiple tabs are open.
       if (!getPinned()) {
         const session = getSessionsSnapshot().find((s) => s.socketPath === socketPath);
         const target = session ? targetForSession(session) : null;
         if (target) {
-          switchClientTo(getConfig().tmux.socketName, target);
+          const result = await switchClientTo(target);
+          console.log(`[tmux] switch-client -t ${target}:`, result);
         }
       }
 

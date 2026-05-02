@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
-import { execSync } from "node:child_process";
+import { execSync, execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { WebSocketServer } from "ws";
 import pty from "node-pty";
@@ -23,13 +23,15 @@ const terminalCss = readFileSync(
   "utf-8",
 );
 
+// Track live pty PIDs so the parent server can correlate them with tmux's
+// list-clients output and switch-client the right one.
+const livePtyPids = new Set();
+
 function tmuxArgs() {
   try {
     execSync(`tmux -L ${tmuxSocket} has-session`, { stdio: "ignore" });
-    // Sessions exist — attach to the most recent one
     return ["-L", tmuxSocket, "attach"];
   } catch {
-    // No sessions — create a new one
     return ["-L", tmuxSocket, "new-session", "-s", "main"];
   }
 }
@@ -43,11 +45,14 @@ function handleConnection(ws) {
     env: process.env,
   });
 
+  livePtyPids.add(ptyProcess.pid);
+
   ptyProcess.onData((data) => {
     if (ws.readyState === 1) ws.send(data);
   });
 
   ptyProcess.onExit(() => {
+    livePtyPids.delete(ptyProcess.pid);
     if (ws.readyState === 1) ws.close();
   });
 
@@ -66,8 +71,51 @@ function handleConnection(ws) {
   });
 
   ws.on("close", () => {
+    livePtyPids.delete(ptyProcess.pid);
     ptyProcess.kill();
   });
+}
+
+/**
+ * Switch every live wterm pty's tmux client to the given target. Returns
+ * the number of clients switched. The parent server hits this when the
+ * voice target changes so the wterm view follows.
+ */
+function switchAllClientsTo(target) {
+  if (livePtyPids.size === 0) return { switched: 0, reason: "no live ptys" };
+  let listing = "";
+  try {
+    listing = execFileSync(
+      "tmux",
+      ["-L", tmuxSocket, "list-clients", "-F", "#{client_pid} #{client_name}"],
+      { encoding: "utf8", timeout: 2000 },
+    );
+  } catch (err) {
+    return { switched: 0, error: `tmux list-clients failed: ${err.message}` };
+  }
+  const names = [];
+  for (const line of listing.trim().split("\n")) {
+    const [pidStr, ...rest] = line.split(" ");
+    const pid = parseInt(pidStr, 10);
+    if (livePtyPids.has(pid)) names.push(rest.join(" "));
+  }
+  if (names.length === 0) {
+    return { switched: 0, reason: "no tmux client matched live ptys" };
+  }
+  let switched = 0;
+  for (const name of names) {
+    try {
+      execFileSync(
+        "tmux",
+        ["-L", tmuxSocket, "switch-client", "-c", name, "-t", target],
+        { stdio: "ignore", timeout: 2000 },
+      );
+      switched++;
+    } catch {
+      // best-effort
+    }
+  }
+  return { switched, total: names.length };
 }
 
 const server = createServer((req, res) => {
@@ -80,6 +128,31 @@ const server = createServer((req, res) => {
   } else if (req.url === "/terminal.css") {
     res.writeHead(200, { "Content-Type": "text/css" });
     res.end(terminalCss);
+  } else if (req.url === "/_clients") {
+    // Internal: the Bun server uses this to correlate pty PIDs with tmux
+    // clients. Bound to 127.0.0.1-ish via the same listen, so on a public
+    // host this would need auth. Tailscale-only deployment is the assumption.
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ptyPids: Array.from(livePtyPids) }));
+  } else if (req.url === "/_switch" && req.method === "POST") {
+    let body = "";
+    req.on("data", (chunk) => (body += chunk));
+    req.on("end", () => {
+      let target = "";
+      try {
+        target = JSON.parse(body || "{}").target ?? "";
+      } catch {
+        // ignore
+      }
+      if (!target) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "target required" }));
+        return;
+      }
+      const result = switchAllClientsTo(target);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(result));
+    });
   } else {
     res.writeHead(404);
     res.end("Not found");

@@ -14,6 +14,8 @@ import { getRpcState } from "./socket-client.ts";
 import type { PiSession } from "./types.ts";
 import { publish } from "../events/bus.ts";
 import { getConfig } from "../config/store.ts";
+import { getCurrentTarget, setCurrentTarget } from "../state.ts";
+import { deleteDispatch } from "../livekit.ts";
 
 let snapshot: PiSession[] = [];
 let timer: NodeJS.Timeout | null = null;
@@ -115,6 +117,21 @@ async function tick(): Promise<PiSession[]> {
     snapshot = next;
     publish({ type: "sessions:update", data: snapshot });
   }
+
+  // If the current voice target's socket has disappeared, the Pi session
+  // ended (user closed it, /reload, crash). Release the dispatch so the UI
+  // knows it's gone instead of staying connected to a phantom room.
+  const target = getCurrentTarget();
+  if (target && !next.some((s) => s.socketPath === target.socketPath)) {
+    console.log(`[poller] voice target gone: ${target.socketPath} — releasing`);
+    setCurrentTarget(null);
+    void deleteDispatch(target.roomName, target.dispatchId);
+    publish({
+      type: "voice:state",
+      data: { state: "target-lost", socketPath: target.socketPath },
+    });
+  }
+
   return next;
 }
 

@@ -24,6 +24,7 @@ import { ReadableStream as NodeReadableStream } from "node:stream/web";
 import {
   PiSocket,
   SteeredError,
+  PiSessionEndedError,
   type PiCallbacks,
 } from "./pi-bridge.ts";
 import {
@@ -209,6 +210,11 @@ class VoiceBridgeAgent extends voice.Agent {
         } catch (err) {
           if (err instanceof SteeredError) {
             logger.info("[VoiceBridgeAgent] interrupted by newer voice turn");
+          } else if (err instanceof PiSessionEndedError) {
+            logger.warn("[VoiceBridgeAgent] Pi session has ended");
+            controller.enqueue(
+              "The Pi session has ended. Pick another one in the sessions tab. ",
+            );
           } else {
             logger.error({ err }, "[VoiceBridgeAgent] error");
             controller.enqueue("Sorry, I had trouble with that. ");

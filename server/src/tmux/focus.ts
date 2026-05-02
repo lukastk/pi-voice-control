@@ -1,14 +1,14 @@
 /**
- * Move the current wterm client to a Pi session's pane so the terminal view
- * follows the voice target.
- *
- * Single-client assumption: `tmux switch-client` without -c switches the most
- * recently active client. Phase 3 accepts that. Multi-tab pinning will need
- * tracking client_pid from `tmux list-clients` and passing -c explicitly;
- * deferred to a later phase.
+ * Switch the wterm view to a Pi session's pane. Goes through the wterm
+ * subprocess's /_switch endpoint, which knows the pty PIDs of every live
+ * wterm WebSocket client and can issue `tmux switch-client -c <name>` for
+ * each one — fixing the multi-client / wrong-tab problem of plain
+ * `tmux switch-client` (which just switches the most-recently-active
+ * client).
  */
-import { execFileSync } from "node:child_process";
 import type { PiSession } from "../sessions/types.ts";
+
+const WTERM_PORT = Number(process.env.WTERM_PORT ?? 7891);
 
 export function targetForSession(s: PiSession): string | null {
   if (!s.tmux.inTmux || !s.tmux.session) return null;
@@ -16,15 +16,24 @@ export function targetForSession(s: PiSession): string | null {
   return `${s.tmux.session}:${s.tmux.windowIndex}.${s.tmux.paneIndex}`;
 }
 
-export function switchClientTo(tmuxSocketName: string, target: string): boolean {
+export async function switchClientTo(target: string): Promise<{
+  switched: number;
+  total?: number;
+  error?: string;
+  reason?: string;
+}> {
   try {
-    execFileSync("tmux", ["-L", tmuxSocketName, "switch-client", "-t", target], {
-      stdio: "ignore",
-      timeout: 2000,
+    const res = await fetch(`http://127.0.0.1:${WTERM_PORT}/_switch`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target }),
+      signal: AbortSignal.timeout(3000),
     });
-    return true;
+    if (!res.ok) {
+      return { switched: 0, error: `wterm /_switch ${res.status}` };
+    }
+    return (await res.json()) as { switched: number; total?: number };
   } catch (err) {
-    console.error(`[tmux] switch-client -t ${target} failed:`, (err as Error).message);
-    return false;
+    return { switched: 0, error: (err as Error).message };
   }
 }

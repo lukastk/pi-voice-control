@@ -8,6 +8,7 @@ type Props = {
   config: Config | null;
   voice: ReturnType<typeof useVoice>;
   onRefresh: () => Promise<void>;
+  resolveStatus: string | null;
 };
 
 function realpathLikeEqual(a: string | null | undefined, b: string | null | undefined): boolean {
@@ -17,7 +18,7 @@ function realpathLikeEqual(a: string | null | undefined, b: string | null | unde
   return a.replace(/\/+$/, "") === b.replace(/\/+$/, "");
 }
 
-export function SessionsTab({ sessions, config, voice, onRefresh }: Props) {
+export function SessionsTab({ sessions, config, voice, onRefresh, resolveStatus }: Props) {
   const defaultFolder = config?.startup.defaultFolder ?? null;
 
   const sorted = useMemo(() => {
@@ -41,6 +42,21 @@ export function SessionsTab({ sessions, config, voice, onRefresh }: Props) {
           Refresh
         </button>
       </header>
+      {resolveStatus && (
+        <div
+          style={{
+            marginBottom: 10,
+            padding: "6px 10px",
+            background: "#1a2238",
+            border: "1px solid #2a4a8a",
+            borderRadius: 4,
+            fontSize: 11,
+            color: "#a8c8ff",
+          }}
+        >
+          {resolveStatus}
+        </div>
+      )}
 
       {sessions.length === 0 ? (
         <Empty config={config} />

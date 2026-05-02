@@ -60,10 +60,15 @@ fi
 # --- process supervision -------------------------------------------------
 
 PIDS=()
+SHUTTING_DOWN=0
 
 cleanup() {
-  echo ""
-  echo -e "${YELLOW}shutting down...${NC}"
+  # idempotent: SIGINT may fire multiple times before processes exit
+  if [ "$SHUTTING_DOWN" = "1" ]; then return; fi
+  SHUTTING_DOWN=1
+  # Write to stderr (unbuffered) so the message survives even if stdout
+  # gets dropped on a fast-exiting bash.
+  printf '\n%bshutting down...%b\n' "$YELLOW" "$NC" >&2
   for pid in "${PIDS[@]:-}"; do
     [ -z "$pid" ] && continue
     if kill -0 "$pid" 2>/dev/null; then
@@ -72,9 +77,18 @@ cleanup() {
       kill "$pid" 2>/dev/null || true
     fi
   done
-  wait 2>/dev/null || true
-  # extra guard for orphaned worker job processes scoped to this repo
+  # give children a moment to exit gracefully, then SIGKILL the holdouts
+  sleep 0.5
+  for pid in "${PIDS[@]:-}"; do
+    [ -z "$pid" ] && continue
+    if kill -0 "$pid" 2>/dev/null; then
+      pkill -9 -P "$pid" 2>/dev/null || true
+      kill -9 "$pid" 2>/dev/null || true
+    fi
+  done
+  # extra guard for orphaned subprocesses scoped to this repo
   pkill -f "$PWD/worker/src/agent.ts" 2>/dev/null || true
+  pkill -f "$PWD/wterm/server.mjs" 2>/dev/null || true
   echo -e "${GREEN}done.${NC}"
 }
 trap cleanup EXIT INT TERM
@@ -101,4 +115,23 @@ echo ""
 echo -e "Press ${YELLOW}Ctrl+C${NC} to stop. Pi tmux sessions are not touched."
 echo ""
 
-exec bun server/src/main.ts
+# Run the HTTP server in the background and wait, so the trap can fire on
+# Ctrl+C. Using `exec` would replace the shell and kill the trap. Disable
+# errexit around wait — when interrupted by a signal it returns non-zero,
+# and with `set -e` that aborts the script before the INT/TERM trap fires.
+bun server/src/main.ts &
+PIDS+=($!)
+
+set +e
+while true; do
+  wait -n 2>/dev/null
+  status=$?
+  # status 130 = SIGINT, 143 = SIGTERM, 0..127 = normal exit, 128+N = signaled
+  if [ "$SHUTTING_DOWN" = "1" ]; then break; fi
+  # if any single child exited normally (status < 128), tear the rest down too
+  if [ "$status" -lt 128 ] && [ "$status" -ne 127 ]; then
+    cleanup
+    break
+  fi
+  # signaled child — let trap handle it
+done
