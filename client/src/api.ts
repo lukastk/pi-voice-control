@@ -15,6 +15,16 @@ export type Config = {
     spawnIfMissing: boolean;
     spawnTmuxSession: string;
   };
+  prompt: { filePath: string; clearOnSwitch: boolean };
+  voice: {
+    earcons: {
+      enabled: boolean;
+      over: boolean;
+      copy: boolean;
+      out: boolean;
+      volume: number;
+    };
+  };
 };
 
 export type DefaultResolution =

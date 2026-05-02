@@ -72,10 +72,12 @@ export function mountApi(app: Hono) {
       console.error("[prompt] read failed; falling back to worker default:", err);
     }
 
+    const cfg = getConfig();
     try {
       const result = await dispatchVoiceAgent({
         socketPath,
         appendSystemPrompt: appendedPrompt,
+        earcons: cfg.voice.earcons,
       });
       setCurrentTarget({
         socketPath,

@@ -24,10 +24,19 @@ export type DispatchResult = {
   dispatchId: string;
 };
 
+export type EarconConfig = {
+  enabled: boolean;
+  over: boolean;
+  copy: boolean;
+  out: boolean;
+  volume: number;
+};
+
 export async function dispatchVoiceAgent(opts: {
   socketPath: string;
   appendSystemPrompt?: string;
   identity?: string;
+  earcons?: EarconConfig;
 }): Promise<DispatchResult> {
   const roomName = `voice-${cryptoRandomShort()}`;
   const identity = opts.identity ?? "user";
@@ -36,6 +45,7 @@ export async function dispatchVoiceAgent(opts: {
     metadata: JSON.stringify({
       socketPath: opts.socketPath,
       appendSystemPrompt: opts.appendSystemPrompt,
+      earcons: opts.earcons,
     }),
   });
 

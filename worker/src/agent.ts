@@ -33,14 +33,40 @@ import {
   toolStatusMessage,
   SPOKEN_TAG_PROMPT,
 } from "./text.ts";
-import { playEarcon } from "./earcons.ts";
+import { playEarcon, setEarconVolume } from "./earcons.ts";
 
 const AGENT_NAME = "voice-bridge";
+
+type EarconConfig = {
+  enabled: boolean;
+  over: boolean;
+  copy: boolean;
+  out: boolean;
+  volume: number;
+};
 
 type JobMetadata = {
   socketPath: string;
   appendSystemPrompt?: string; // overrides default if provided
+  earcons?: EarconConfig;
 };
+
+const DEFAULT_EARCONS: EarconConfig = {
+  enabled: true,
+  over: true,
+  copy: true,
+  out: true,
+  volume: 1,
+};
+
+let activeEarcons: EarconConfig = DEFAULT_EARCONS;
+
+function shouldPlay(kind: "over" | "copy" | "out"): boolean {
+  if (!activeEarcons.enabled) return false;
+  if (kind === "over") return activeEarcons.over;
+  if (kind === "copy") return activeEarcons.copy;
+  return activeEarcons.out;
+}
 
 function parseMetadata(raw: string | undefined): JobMetadata {
   if (!raw) {
@@ -128,7 +154,7 @@ class VoiceBridgeAgent extends voice.Agent {
         const playStartEarcon = () => {
           if (agentStartedSpeaking) return;
           agentStartedSpeaking = true;
-          playEarcon(session, "copy");
+          if (shouldPlay("copy")) playEarcon(session, "copy");
         };
 
         const emit = (raw: string) => {
@@ -157,7 +183,7 @@ class VoiceBridgeAgent extends voice.Agent {
             toolActive = false;
           },
           onAgentEnd() {
-            playEarcon(session, "out");
+            if (shouldPlay("out")) playEarcon(session, "out");
           },
         };
 
@@ -211,7 +237,12 @@ export default defineAgent({
   entry: async (ctx: JobContext) => {
     const logger = log();
     const meta = parseMetadata(ctx.job.metadata);
-    logger.info({ socketPath: meta.socketPath }, "[worker] entry");
+    activeEarcons = { ...DEFAULT_EARCONS, ...(meta.earcons ?? {}) };
+    setEarconVolume(activeEarcons.volume);
+    logger.info(
+      { socketPath: meta.socketPath, earcons: activeEarcons },
+      "[worker] entry",
+    );
 
     await ctx.connect();
     logger.info("[worker] connected to LiveKit room");
@@ -239,7 +270,7 @@ export default defineAgent({
         (ev as { final?: boolean }).final ??
         (ev as { isFinal?: boolean }).isFinal ??
         true;
-      if (isFinal) playEarcon(session, "over");
+      if (isFinal && shouldPlay("over")) playEarcon(session, "over");
     });
 
     await session.start({ agent, room: ctx.room });

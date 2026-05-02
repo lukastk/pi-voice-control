@@ -1,0 +1,18 @@
+{
+  "name": "Voice Agent Bridge",
+  "short_name": "VoiceBridge",
+  "description": "Speak to your Pi sessions running in tmux.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#1a1a2e",
+  "theme_color": "#1a1a2e",
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

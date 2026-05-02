@@ -26,6 +26,15 @@ export type Config = {
     filePath: string; // tilde expanded at read-time
     clearOnSwitch: boolean;
   };
+  voice: {
+    earcons: {
+      enabled: boolean;
+      over: boolean;
+      copy: boolean;
+      out: boolean;
+      volume: number; // 0..1 multiplier on top of synth's baseline volume
+    };
+  };
 };
 
 export const DEFAULTS: Config = {
@@ -43,6 +52,15 @@ export const DEFAULTS: Config = {
   prompt: {
     filePath: "~/.pi/agent/AGENTS.voice.md",
     clearOnSwitch: false,
+  },
+  voice: {
+    earcons: {
+      enabled: true,
+      over: true,
+      copy: true,
+      out: true,
+      volume: 1,
+    },
   },
 };
 

@@ -19,7 +19,20 @@ import type { voice } from "@livekit/agents";
 
 const SAMPLE_RATE = 24000;
 const CHANNELS = 1;
-const VOLUME = 0.35;
+const BASE_VOLUME = 0.35;
+
+let volumeMultiplier = 1;
+
+export function setEarconVolume(mult: number) {
+  const clamped = Math.max(0, Math.min(1, mult));
+  if (clamped === volumeMultiplier) return;
+  volumeMultiplier = clamped;
+  rebuild();
+}
+
+function effectiveVolume(): number {
+  return BASE_VOLUME * volumeMultiplier;
+}
 
 export type EarconKind = "over" | "copy" | "out";
 
@@ -27,12 +40,13 @@ function tone(freqHz: number, durationMs: number, fadeMs = 6): Int16Array {
   const samples = Math.max(1, Math.floor((durationMs / 1000) * SAMPLE_RATE));
   const fadeSamples = Math.max(1, Math.floor((fadeMs / 1000) * SAMPLE_RATE));
   const out = new Int16Array(samples);
+  const volume = effectiveVolume();
   for (let i = 0; i < samples; i++) {
     const t = i / SAMPLE_RATE;
     let env = 1;
     if (i < fadeSamples) env = i / fadeSamples;
     else if (i > samples - fadeSamples) env = (samples - i) / fadeSamples;
-    const v = Math.sin(2 * Math.PI * freqHz * t) * env * VOLUME;
+    const v = Math.sin(2 * Math.PI * freqHz * t) * env * volume;
     out[i] = Math.max(-32768, Math.min(32767, Math.round(v * 32767)));
   }
   return out;
@@ -49,14 +63,19 @@ function concat(...arrs: Int16Array[]): Int16Array {
   return out;
 }
 
-const EARCONS: Record<EarconKind, Int16Array> = {
-  // user just stopped speaking — short rising chirp ~80 ms
-  over: tone(900, 80),
-  // agent starts speaking — two ascending tones, ~50 ms each
-  copy: concat(tone(620, 55), tone(880, 55)),
-  // agent finished — short falling chirp
-  out: tone(540, 80),
-};
+let EARCONS: Record<EarconKind, Int16Array> = build();
+
+function build(): Record<EarconKind, Int16Array> {
+  return {
+    over: tone(900, 80),
+    copy: concat(tone(620, 55), tone(880, 55)),
+    out: tone(540, 80),
+  };
+}
+
+function rebuild() {
+  EARCONS = build();
+}
 
 /**
  * Fire-and-forget. Returns synchronously after handing the AudioFrame off to

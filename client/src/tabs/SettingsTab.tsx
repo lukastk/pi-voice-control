@@ -8,6 +8,13 @@ export function SettingsTab({ config }: Props) {
   const [tmuxSocket, setTmuxSocket] = useState<string>("");
   const [spawnIfMissing, setSpawnIfMissing] = useState<boolean>(true);
   const [spawnTmuxSession, setSpawnTmuxSession] = useState<string>("");
+
+  const [earconsEnabled, setEarconsEnabled] = useState(true);
+  const [earconOver, setEarconOver] = useState(true);
+  const [earconCopy, setEarconCopy] = useState(true);
+  const [earconOut, setEarconOut] = useState(true);
+  const [earconVolume, setEarconVolume] = useState(1);
+
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -17,6 +24,11 @@ export function SettingsTab({ config }: Props) {
     setTmuxSocket(config.tmux.socketName);
     setSpawnIfMissing(config.startup.spawnIfMissing);
     setSpawnTmuxSession(config.startup.spawnTmuxSession);
+    setEarconsEnabled(config.voice.earcons.enabled);
+    setEarconOver(config.voice.earcons.over);
+    setEarconCopy(config.voice.earcons.copy);
+    setEarconOut(config.voice.earcons.out);
+    setEarconVolume(config.voice.earcons.volume);
   }, [config]);
 
   async function save() {
@@ -29,6 +41,15 @@ export function SettingsTab({ config }: Props) {
           spawnIfMissing,
           spawnTmuxSession: spawnTmuxSession || "voice-bridge-pi",
         },
+        voice: {
+          earcons: {
+            enabled: earconsEnabled,
+            over: earconOver,
+            copy: earconCopy,
+            out: earconOut,
+            volume: earconVolume,
+          },
+        },
       });
       setSavedAt(Date.now());
     } catch (err: any) {
@@ -36,65 +57,123 @@ export function SettingsTab({ config }: Props) {
     }
   }
 
-  if (!config) {
-    return <div style={{ padding: 16, color: "#888" }}>Loading config…</div>;
-  }
+  if (!config) return <div style={{ padding: 16, color: "#888" }}>Loading config…</div>;
 
   return (
-    <div style={{ padding: 16, maxWidth: 720 }}>
+    <div style={{ padding: 16, maxWidth: 760, height: "100%", overflowY: "auto" }}>
       <h2 style={{ fontSize: 14, color: "#c0c0d0", marginBottom: 12 }}>Settings</h2>
 
-      <Field label="Default folder">
-        <input
-          type="text"
-          value={defaultFolder}
-          placeholder="/Users/you/dev/myproject (leave empty for explicit pick)"
-          onChange={(e) => setDefaultFolder(e.target.value)}
-          style={inputStyle}
-        />
-        <p style={hintStyle}>
-          On UI start, server checks for a Pi session running in this folder. If found, it's
-          pinned to the top of the Sessions list. If not and Spawn-if-missing is on, the server
-          starts one in tmux.
-        </p>
-      </Field>
-
-      <Field label="Spawn if missing">
-        <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <Section title="Pi sessions">
+        <Field label="Default folder">
           <input
-            type="checkbox"
-            checked={spawnIfMissing}
-            onChange={(e) => setSpawnIfMissing(e.target.checked)}
+            type="text"
+            value={defaultFolder}
+            placeholder="/Users/you/dev/myproject (leave empty for explicit pick)"
+            onChange={(e) => setDefaultFolder(e.target.value)}
+            style={inputStyle}
           />
-          <span style={{ fontSize: 13 }}>
-            Start <code>pi</code> in the default folder when no live session matches
-          </span>
-        </label>
-      </Field>
+          <p style={hintStyle}>
+            Server checks for a Pi running in this folder on UI start.
+            If missing and Spawn-if-missing is on, it spawns one in tmux.
+          </p>
+        </Field>
 
-      <Field label="tmux socket">
-        <input
-          type="text"
-          value={tmuxSocket}
-          onChange={(e) => setTmuxSocket(e.target.value)}
-          style={inputStyle}
-        />
-        <p style={hintStyle}>
-          The socket name passed as <code>tmux -L &lt;name&gt;</code>. Default: <code>mysystem</code>.
-        </p>
-      </Field>
+        <Field label="Spawn if missing">
+          <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <input
+              type="checkbox"
+              checked={spawnIfMissing}
+              onChange={(e) => setSpawnIfMissing(e.target.checked)}
+            />
+            <span style={{ fontSize: 13 }}>
+              Start <code>pi</code> in default folder when no live session matches
+            </span>
+          </label>
+        </Field>
 
-      <Field label="Spawn tmux session">
-        <input
-          type="text"
-          value={spawnTmuxSession}
-          onChange={(e) => setSpawnTmuxSession(e.target.value)}
-          style={inputStyle}
-        />
-        <p style={hintStyle}>
-          When spawning a Pi, a window is created inside this tmux session (created if missing).
-        </p>
-      </Field>
+        <Field label="tmux socket">
+          <input
+            type="text"
+            value={tmuxSocket}
+            onChange={(e) => setTmuxSocket(e.target.value)}
+            style={inputStyle}
+          />
+          <p style={hintStyle}>
+            Passed as <code>tmux -L &lt;name&gt;</code>. Changing this requires a server restart for wterm to follow.
+          </p>
+        </Field>
+
+        <Field label="Spawn tmux session">
+          <input
+            type="text"
+            value={spawnTmuxSession}
+            onChange={(e) => setSpawnTmuxSession(e.target.value)}
+            style={inputStyle}
+          />
+          <p style={hintStyle}>
+            When spawning a Pi, a window is created inside this tmux session.
+          </p>
+        </Field>
+      </Section>
+
+      <Section title="Earcons (radio etiquette tones)">
+        <Field label="Enabled">
+          <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <input
+              type="checkbox"
+              checked={earconsEnabled}
+              onChange={(e) => setEarconsEnabled(e.target.checked)}
+            />
+            <span style={{ fontSize: 13 }}>Master toggle</span>
+          </label>
+        </Field>
+        <Field label="Per-event">
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 13 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <input
+                type="checkbox"
+                checked={earconOver}
+                disabled={!earconsEnabled}
+                onChange={(e) => setEarconOver(e.target.checked)}
+              />
+              over <span style={{ color: "#666" }}>(user-stop)</span>
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <input
+                type="checkbox"
+                checked={earconCopy}
+                disabled={!earconsEnabled}
+                onChange={(e) => setEarconCopy(e.target.checked)}
+              />
+              copy <span style={{ color: "#666" }}>(agent-start)</span>
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <input
+                type="checkbox"
+                checked={earconOut}
+                disabled={!earconsEnabled}
+                onChange={(e) => setEarconOut(e.target.checked)}
+              />
+              out <span style={{ color: "#666" }}>(agent-end)</span>
+            </label>
+          </div>
+        </Field>
+        <Field label={`Volume — ${Math.round(earconVolume * 100)}%`}>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={earconVolume}
+            disabled={!earconsEnabled}
+            onChange={(e) => setEarconVolume(Number(e.target.value))}
+            style={{ width: "100%" }}
+          />
+          <p style={hintStyle}>
+            Earcons take effect on the next voice connection (worker reads this from the dispatch metadata).
+          </p>
+        </Field>
+      </Section>
 
       <div style={{ display: "flex", gap: 8, marginTop: 14, alignItems: "center" }}>
         <button onClick={save} style={btnPrimary}>
@@ -126,6 +205,17 @@ export function SettingsTab({ config }: Props) {
         </pre>
       </details>
     </div>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section style={{ marginBottom: 18 }}>
+      <h3 style={{ fontSize: 12, color: "#9090a8", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>
+        {title}
+      </h3>
+      <div style={{ paddingLeft: 4 }}>{children}</div>
+    </section>
   );
 }
 
