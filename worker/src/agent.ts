@@ -33,6 +33,7 @@ import {
   toolStatusMessage,
   SPOKEN_TAG_PROMPT,
 } from "./text.ts";
+import { playEarcon } from "./earcons.ts";
 
 const AGENT_NAME = "voice-bridge";
 
@@ -109,6 +110,7 @@ class VoiceBridgeAgent extends voice.Agent {
     if (!userText) return null;
 
     const pi = this.#pi;
+    const session = this.session;
     const isInterruption = pi.isBusy;
 
     logger.info({ userText, isInterruption }, "[VoiceBridgeAgent] llmNode");
@@ -121,10 +123,18 @@ class VoiceBridgeAgent extends voice.Agent {
         let spokenCount = 0;
         let lastEmit = Date.now();
         let toolActive = false;
+        let agentStartedSpeaking = false;
+
+        const playStartEarcon = () => {
+          if (agentStartedSpeaking) return;
+          agentStartedSpeaking = true;
+          playEarcon(session, "copy");
+        };
 
         const emit = (raw: string) => {
           const cleaned = cleanForSpeech(raw);
           if (!cleaned) return;
+          playStartEarcon();
           controller.enqueue(cleaned + " ");
           lastEmit = Date.now();
         };
@@ -139,11 +149,15 @@ class VoiceBridgeAgent extends voice.Agent {
           },
           onToolStart(toolName) {
             toolActive = true;
+            playStartEarcon();
             controller.enqueue(toolStatusMessage(toolName));
             lastEmit = Date.now();
           },
           onToolEnd() {
             toolActive = false;
+          },
+          onAgentEnd() {
+            playEarcon(session, "out");
           },
         };
 
@@ -219,6 +233,13 @@ export default defineAgent({
 
     session.on(voice.AgentSessionEventTypes.UserInputTranscribed, (ev) => {
       logger.info({ transcript: ev.transcript }, "[worker] user");
+      // "Over" — fires on every transcription, but session.say queues so
+      // partial transcripts simply chain a tiny earcon each. Keep to final.
+      const isFinal =
+        (ev as { final?: boolean }).final ??
+        (ev as { isFinal?: boolean }).isFinal ??
+        true;
+      if (isFinal) playEarcon(session, "over");
     });
 
     await session.start({ agent, room: ctx.room });
