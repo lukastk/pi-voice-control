@@ -2,6 +2,7 @@ import {
   Room,
   RoomEvent,
   Track,
+  type RemoteAudioTrack,
   type RemoteTrack,
   type RemoteParticipant,
 } from "livekit-client";
@@ -18,6 +19,7 @@ export type DataMessage = {
 export type VoiceHandle = {
   room: Room;
   audioElement: HTMLAudioElement;
+  audioContext: AudioContext | null;
   disconnect: () => Promise<void>;
 };
 
@@ -53,10 +55,77 @@ export async function connectVoice(
     },
   });
 
+  // We still create an HTMLAudioElement and attach the track to it because
+  // (a) it makes the browser register "playing audio" for media-session
+  // purposes and (b) some legacy code paths key off the element. But the
+  // primary playback route is Web Audio (createMediaStreamSource), which on
+  // Android Chromium keeps playing when the screen is off — HTMLAudioElement
+  // gets paused by visibility-change throttling there.
   const audioElement = document.createElement("audio");
   audioElement.autoplay = true;
+  audioElement.muted = false;
   audioElement.style.display = "none";
+  audioElement.setAttribute("playsinline", "");
   document.body.appendChild(audioElement);
+
+  // Create the AudioContext now while we're inside the user gesture from
+  // the Connect button. iOS in particular requires this; Android lets us
+  // create later but earlier is fine.
+  let audioContext: AudioContext | null = null;
+  try {
+    const Ctor =
+      (window as any).AudioContext || (window as any).webkitAudioContext;
+    if (Ctor) {
+      audioContext = new Ctor({ latencyHint: "interactive" }) as AudioContext;
+      void audioContext.resume();
+    }
+  } catch (err) {
+    log(`AudioContext create failed: ${(err as Error).message}`);
+  }
+
+  // Some browsers suspend AudioContext when the page is backgrounded for
+  // a long time. Resume on visibility change as a safety net so audio
+  // resumes the moment the screen wakes up — and on a periodic timer so
+  // long stretches with the screen off don't strand a suspended context.
+  const ensureRunning = () => {
+    if (audioContext && audioContext.state === "suspended") {
+      audioContext.resume().catch(() => {});
+    }
+  };
+  document.addEventListener("visibilitychange", ensureRunning);
+  const ctxKeepalive = window.setInterval(ensureRunning, 5000);
+
+  // Track per-stream Web Audio nodes so we can disconnect them on detach.
+  const audioRoutes = new Map<string, { source: MediaStreamAudioSourceNode; gain: GainNode }>();
+
+  const attachAudioTrack = (track: RemoteAudioTrack) => {
+    // Always attach to HTMLAudioElement too — this keeps the page registered
+    // as "playing media" with the OS for media-session controls.
+    track.attach(audioElement);
+    if (!audioContext || !track.mediaStreamTrack) return;
+    try {
+      const stream = new MediaStream([track.mediaStreamTrack]);
+      const source = audioContext.createMediaStreamSource(stream);
+      const gain = audioContext.createGain();
+      gain.gain.value = 1.0;
+      source.connect(gain).connect(audioContext.destination);
+      audioRoutes.set(track.sid ?? String(audioRoutes.size), { source, gain });
+      log("audio routed via Web Audio (background-safe)");
+    } catch (err) {
+      log(`Web Audio route failed: ${(err as Error).message}`);
+    }
+  };
+
+  const detachAudioTrack = (track: RemoteTrack) => {
+    track.detach().forEach((el) => el.remove());
+    const sid = track.sid ?? "";
+    const route = audioRoutes.get(sid);
+    if (route) {
+      try { route.source.disconnect(); } catch {}
+      try { route.gain.disconnect(); } catch {}
+      audioRoutes.delete(sid);
+    }
+  };
 
   room
     .on(RoomEvent.Connected, () => log("connected"))
@@ -78,6 +147,7 @@ export async function connectVoice(
     })
     .on(RoomEvent.Reconnected, () => {
       log("reconnected");
+      ensureRunning();
       opts.onMessage?.({
         kind: "info",
         source: "WebRTC",
@@ -87,11 +157,11 @@ export async function connectVoice(
     .on(RoomEvent.ParticipantConnected, (p: RemoteParticipant) => log(`participant: ${p.identity}`))
     .on(RoomEvent.TrackSubscribed, (track: RemoteTrack) => {
       if (track.kind === Track.Kind.Audio) {
-        track.attach(audioElement);
+        attachAudioTrack(track as RemoteAudioTrack);
       }
     })
     .on(RoomEvent.TrackUnsubscribed, (track) => {
-      track.detach().forEach((el) => el.remove());
+      detachAudioTrack(track);
     })
     .on(RoomEvent.DataReceived, (payload) => {
       try {
@@ -132,6 +202,16 @@ export async function connectVoice(
 
   const disconnect = async () => {
     await room.disconnect();
+    document.removeEventListener("visibilitychange", ensureRunning);
+    window.clearInterval(ctxKeepalive);
+    for (const route of audioRoutes.values()) {
+      try { route.source.disconnect(); } catch {}
+      try { route.gain.disconnect(); } catch {}
+    }
+    audioRoutes.clear();
+    if (audioContext) {
+      try { await audioContext.close(); } catch {}
+    }
     audioElement.remove();
     document.querySelectorAll('audio[data-role="voice-bridge-keepalive"]').forEach((el) => el.remove());
     if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
@@ -144,7 +224,7 @@ export async function connectVoice(
     }
   };
 
-  return { room, audioElement, disconnect };
+  return { room, audioElement, audioContext, disconnect };
 }
 
 /**
