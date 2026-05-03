@@ -111,8 +111,12 @@ export async function connectVoice(
  * If the URL points at localhost / 127.0.0.1 / ::1, swap the hostname for
  * the page's current hostname. Required for mobile / Tailscale access where
  * "localhost" on the client = the phone itself, not the Mac running LiveKit.
- * Leaves explicit external hostnames alone so a deployment behind a real
- * LiveKit URL still works.
+ * Also upgrade ws:// to wss:// when the page itself is on https — Tailscale
+ * Serve / any HTTPS proxy in front of LiveKit only accepts TLS, and a plain
+ * ws:// to a TLS-only port silently hangs instead of erroring.
+ *
+ * Leaves explicit external hostnames alone (other than the scheme upgrade)
+ * so a deployment behind a real LiveKit URL still works.
  */
 function rewriteLocalhost(url: string): string {
   if (typeof window === "undefined") return url;
@@ -120,6 +124,9 @@ function rewriteLocalhost(url: string): string {
     const u = new URL(url);
     if (u.hostname === "localhost" || u.hostname === "127.0.0.1" || u.hostname === "::1") {
       u.hostname = window.location.hostname;
+    }
+    if (window.location.protocol === "https:" && u.protocol === "ws:") {
+      u.protocol = "wss:";
     }
     return u.toString();
   } catch {
