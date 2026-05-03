@@ -100,29 +100,33 @@ export async function connectVoice(
 
   const attachAudioTrack = (track: RemoteAudioTrack) => {
     if (!audioContext || !track.mediaStreamTrack) {
-      // Fallback only — no AudioContext means we couldn't construct one
-      // (very old browser). Use HTMLAudioElement so the user at least
-      // hears something with the screen on.
+      // No AudioContext (very old browser). Audible HTMLAudioElement only.
+      audioElement.muted = false;
       track.attach(audioElement);
       log("audio routed via HTMLAudioElement (no AudioContext)");
       return;
     }
-    // IMPORTANT: do NOT also track.attach() to the HTMLAudioElement. The
-    // element would decode and play the same track in parallel with Web
-    // Audio's MediaStreamSource, and the slight timing offset between the
-    // two output paths produces a comb-filter / "tunnel" sound. The silent
-    // keep-alive element (separate, attached in enableBackgroundMediaPlayback)
-    // is what keeps the page registered as "playing media" for OS purposes.
+    // Chromium bug crbug.com/121673: MediaStreamAudioSourceNode produces no
+    // sound unless the same MediaStream is also consumed by an
+    // HTMLMediaElement to "kick" the decoding pipeline. So we attach the
+    // track to audioElement AND mute it — the element drives decoding,
+    // Web Audio is the only audible output (no tunnel sound from dual
+    // playback). The silent keep-alive element (separate, set up in
+    // enableBackgroundMediaPlayback) is what keeps the page registered as
+    // "playing media" with the OS for media-session purposes.
     try {
+      track.attach(audioElement);
+      audioElement.muted = true;
       const stream = new MediaStream([track.mediaStreamTrack]);
       const source = audioContext.createMediaStreamSource(stream);
       const gain = audioContext.createGain();
       gain.gain.value = 1.0;
       source.connect(gain).connect(audioContext.destination);
       audioRoutes.set(track.sid ?? String(audioRoutes.size), { source, gain });
-      log("audio routed via Web Audio (background-safe)");
+      log("audio routed via Web Audio (background-safe; element muted decoder-pump)");
     } catch (err) {
       log(`Web Audio route failed, falling back to <audio>: ${(err as Error).message}`);
+      audioElement.muted = false;
       track.attach(audioElement);
     }
   };
