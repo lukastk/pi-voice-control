@@ -99,10 +99,20 @@ export async function connectVoice(
   const audioRoutes = new Map<string, { source: MediaStreamAudioSourceNode; gain: GainNode }>();
 
   const attachAudioTrack = (track: RemoteAudioTrack) => {
-    // Always attach to HTMLAudioElement too — this keeps the page registered
-    // as "playing media" with the OS for media-session controls.
-    track.attach(audioElement);
-    if (!audioContext || !track.mediaStreamTrack) return;
+    if (!audioContext || !track.mediaStreamTrack) {
+      // Fallback only — no AudioContext means we couldn't construct one
+      // (very old browser). Use HTMLAudioElement so the user at least
+      // hears something with the screen on.
+      track.attach(audioElement);
+      log("audio routed via HTMLAudioElement (no AudioContext)");
+      return;
+    }
+    // IMPORTANT: do NOT also track.attach() to the HTMLAudioElement. The
+    // element would decode and play the same track in parallel with Web
+    // Audio's MediaStreamSource, and the slight timing offset between the
+    // two output paths produces a comb-filter / "tunnel" sound. The silent
+    // keep-alive element (separate, attached in enableBackgroundMediaPlayback)
+    // is what keeps the page registered as "playing media" for OS purposes.
     try {
       const stream = new MediaStream([track.mediaStreamTrack]);
       const source = audioContext.createMediaStreamSource(stream);
@@ -112,7 +122,8 @@ export async function connectVoice(
       audioRoutes.set(track.sid ?? String(audioRoutes.size), { source, gain });
       log("audio routed via Web Audio (background-safe)");
     } catch (err) {
-      log(`Web Audio route failed: ${(err as Error).message}`);
+      log(`Web Audio route failed, falling back to <audio>: ${(err as Error).message}`);
+      track.attach(audioElement);
     }
   };
 
