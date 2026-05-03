@@ -94,6 +94,42 @@ export class SpeechChunker {
   }
 }
 
+/**
+ * Split a single cleaned spoken segment into sentence-sized pieces before
+ * enqueueing into the LLM stream that feeds pipelineReply.
+ *
+ * Why: pushing one ~280-char chunk and then closing the controller tripped
+ * a race in livekit-agents' SegmentSynchronizerImpl where the audio task
+ * marked itself finished before the text task had fed the synthesizer
+ * (logged as `markPlaybackFinished called before text/audio input is done`
+ * with `textDone:false`). Net result: the whole segment played as silence
+ * — visible in /tmp/vab.log as a content tts_say lasting only ~80ms when
+ * the text would normally synthesize over 2+ seconds.
+ *
+ * Splitting on sentence boundaries gives the framework multiple chunk
+ * boundaries to align text and audio against. Empirically 252-char single
+ * chunks worked while 279-char single chunks didn't, so we split anything
+ * over ~150 chars and let smaller content pass through unchanged.
+ */
+export function splitForSpeech(text: string): string[] {
+  if (text.length <= 150) return [text];
+  const pieces: string[] = [];
+  const re = /[.!?](?:\s|$)/g;
+  let start = 0;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(text)) !== null) {
+    const end = match.index + 1;
+    const piece = text.slice(start, end).trim();
+    if (piece) pieces.push(piece);
+    start = match.index + match[0].length;
+  }
+  if (start < text.length) {
+    const piece = text.slice(start).trim();
+    if (piece) pieces.push(piece);
+  }
+  return pieces.length > 0 ? pieces : [text];
+}
+
 export function cleanForSpeech(text: string): string {
   return text
     .replace(/```[\s\S]*?```/g, "I'm skipping a code block.")

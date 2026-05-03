@@ -33,6 +33,7 @@ import {
   SpokenTagParser,
   SpeechChunker,
   cleanForSpeech,
+  splitForSpeech,
   toolStatusMessage,
   SPOKEN_TAG_PROMPT,
 } from "./text.ts";
@@ -198,9 +199,13 @@ class VoiceBridgeAgent extends voice.Agent {
         const emit = (raw: string) => {
           const cleaned = cleanForSpeech(raw);
           if (!cleaned) return;
-          if (safeEnqueue(cleaned + " ")) {
+          // Split larger spoken segments before enqueueing — see
+          // splitForSpeech() docstring for the SegmentSynchronizerImpl
+          // race this avoids. Short content goes through as one chunk.
+          for (const piece of splitForSpeech(cleaned)) {
+            if (!safeEnqueue(piece + " ")) return;
             emitCount++;
-            emitChars += cleaned.length;
+            emitChars += piece.length;
             lastEmit = Date.now();
           }
         };
