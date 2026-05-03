@@ -39,7 +39,7 @@ If voice still fails with "Microphone access requires HTTPS on remote hosts", th
 
 ### Android Chrome PWA
 
-Opening `https://<tailnet>/` on Android Chrome gives an "Add to Home screen" prompt — the app installs as a PWA. **Caveat:** Android Chrome PWAs cannot run audio with the screen off. For pocket use, build the Android wrapper at `android/` (Phase 8 — a thin Kotlin WebView with a microphone foreground service).
+Opening `https://<tailnet>/` on Android Chrome gives an "Add to Home screen" prompt — the app installs as a PWA. **Caveat:** Android Chrome PWAs cannot run audio with the screen off. For pocket use, build the Android wrapper at `android/` — see [`android/README.md`](android/README.md). It's a ~250-line Kotlin app with a `microphone | mediaPlayback` foreground service that keeps WebRTC alive when the screen is locked.
 
 ## Layout
 

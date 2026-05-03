@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+   Disable backup of all app data — the only thing of substance is a single
+   URL in SharedPreferences which the user enters once anyway.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </cloud-backup>
+    <device-transfer>
+        <include domain="sharedpref" path="voice_agent_bridge.xml" />
+    </device-transfer>
+</data-extraction-rules>

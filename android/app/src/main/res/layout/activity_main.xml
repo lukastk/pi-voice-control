@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#1a1a2e">
+
+    <WebView
+        android:id="@+id/webview"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- Tiny invisible strip at the very top edge to receive long-press for
+         changing the configured URL. WebView swallows long-press touches so
+         we need a layer above it. Width is small + transparent so it doesn't
+         interfere with normal use. -->
+    <View
+        android:id="@+id/url_long_press_target"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_gravity="top|end"
+        android:background="@android:color/transparent"
+        android:contentDescription="Long-press to change URL" />
+
+</FrameLayout>
