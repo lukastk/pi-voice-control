@@ -90,6 +90,10 @@ class MainActivity : AppCompatActivity() {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
         if (missing.isEmpty()) {
+            // Already had everything granted from a previous install — no
+            // onRequestPermissionsResult callback will fire, so prompt for
+            // the battery exemption here too.
+            maybePromptBatteryOptimizationExemption()
             startForegroundServiceAndLoad()
         } else {
             ActivityCompat.requestPermissions(this, missing.toTypedArray(), REQ_RUNTIME)
