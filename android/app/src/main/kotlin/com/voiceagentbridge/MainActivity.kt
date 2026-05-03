@@ -1,11 +1,15 @@
 package com.voiceagentbridge
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import android.text.InputType
 import android.view.View
 import android.webkit.PermissionRequest
@@ -101,8 +105,54 @@ class MainActivity : AppCompatActivity() {
         if (requestCode == REQ_RUNTIME) {
             // Any not-granted result is the user's choice — load anyway,
             // but voice obviously won't work without RECORD_AUDIO.
+            maybePromptBatteryOptimizationExemption()
             startForegroundServiceAndLoad()
         }
+    }
+
+    /**
+     * Doze mode can throttle even our microphone-typed foreground service
+     * after ~30 min of screen-off idle. The system-settings shortcut at
+     * ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS lets the user mark the
+     * app as exempt — symptoms before exempt: voice "works until it
+     * doesn't" after a long screen-off. Symptoms after: works for hours.
+     *
+     * Only prompted once per install since the system intent is mildly
+     * annoying. Re-trigger via long-press URL → "battery" if we add that.
+     */
+    @SuppressLint("BatteryLife")
+    private fun maybePromptBatteryOptimizationExemption() {
+        if (prefs.getBoolean(KEY_BATTERY_PROMPT_SHOWN, false)) return
+        val pm = getSystemService(POWER_SERVICE) as? PowerManager ?: return
+        if (pm.isIgnoringBatteryOptimizations(packageName)) {
+            prefs.edit().putBoolean(KEY_BATTERY_PROMPT_SHOWN, true).apply()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Keep voice running with screen off")
+            .setMessage(
+                "Android may throttle background audio after ~30 minutes of " +
+                    "screen-off. Allow Voice Bridge to ignore battery " +
+                    "optimisation so voice keeps working for hours.",
+            )
+            .setPositiveButton("Settings") { _, _ ->
+                val intent = Intent(
+                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:$packageName"),
+                )
+                try {
+                    startActivity(intent)
+                } catch (_: Throwable) {
+                    // some OEMs route this to a different settings page
+                    startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                }
+                prefs.edit().putBoolean(KEY_BATTERY_PROMPT_SHOWN, true).apply()
+            }
+            .setNegativeButton("Skip") { _, _ ->
+                prefs.edit().putBoolean(KEY_BATTERY_PROMPT_SHOWN, true).apply()
+            }
+            .setCancelable(false)
+            .show()
     }
 
     private fun startForegroundServiceAndLoad() {
@@ -161,6 +211,7 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val PREFS = "voice_agent_bridge"
         private const val KEY_URL = "url"
+        private const val KEY_BATTERY_PROMPT_SHOWN = "battery_prompt_shown"
         private const val REQ_RUNTIME = 1001
     }
 }

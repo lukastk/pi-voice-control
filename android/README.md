@@ -45,7 +45,7 @@ After permissions are granted, paste your URL. Connect voice in the UI. Then loc
 
 - **Bluetooth audio**: Android routes mic + speaker through whichever output device is active. AirPods or any BT headset will work; mid-call output device switching also works because the WebView uses standard system audio.
 - **Tailscale must be running** on the phone with the same Tailnet, or the URL won't resolve. Tailscale's auto-cert only works inside the tailnet.
-- **Doze mode after long sleep**: if you put the phone in your pocket for hours and Android decides nothing is happening, it can still throttle. The foreground service prevents this for "active" use but won't override `Battery Optimization`. If you see voice drop after long idle, go to Settings → Apps → Voice Bridge → Battery → "Unrestricted".
+- **Doze mode after long sleep**: if you put the phone in your pocket for hours and Android decides nothing is happening, it can still throttle. The foreground service prevents this for "active" use but won't override `Battery Optimization`. The app prompts on first launch to mark itself as battery-optimisation-exempt — accept that prompt. If you skipped it: Settings → Apps → Voice Bridge → Battery → "Unrestricted".
 
 ## Why a foreground service vs. a regular WebView?
 

@@ -60,7 +60,30 @@ export async function connectVoice(
 
   room
     .on(RoomEvent.Connected, () => log("connected"))
-    .on(RoomEvent.Disconnected, (reason) => log(`disconnected: ${reason ?? "unknown"}`))
+    .on(RoomEvent.Disconnected, (reason) => {
+      log(`disconnected: ${reason ?? "unknown"}`);
+      opts.onMessage?.({
+        kind: "error",
+        source: "WebRTC",
+        message: `Voice link dropped (${reason ?? "unknown"}). Reconnect from Sessions tab.`,
+      });
+    })
+    .on(RoomEvent.Reconnecting, () => {
+      log("reconnecting…");
+      opts.onMessage?.({
+        kind: "info",
+        source: "WebRTC",
+        message: "Voice link reconnecting…",
+      });
+    })
+    .on(RoomEvent.Reconnected, () => {
+      log("reconnected");
+      opts.onMessage?.({
+        kind: "info",
+        source: "WebRTC",
+        message: "Voice link restored.",
+      });
+    })
     .on(RoomEvent.ParticipantConnected, (p: RemoteParticipant) => log(`participant: ${p.identity}`))
     .on(RoomEvent.TrackSubscribed, (track: RemoteTrack) => {
       if (track.kind === Track.Kind.Audio) {
