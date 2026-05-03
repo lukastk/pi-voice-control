@@ -1,16 +1,17 @@
 /**
  * Voice connection lifecycle for the React app.
  *
- * Owns the LiveKit Room handle plus the current target socket. Switching
- * targets first releases the old dispatch so the worker tears down before a
- * new one is created on the server.
+ * Owns the VoiceTransport (WebTransport via livekit-client, or
+ * NativeTransport via the Android wrapper's JS↔Kotlin bridge — see
+ * voice-transport.ts) plus the current target socket. Switching targets
+ * first releases the old dispatch so the worker tears down before a new
+ * one is created on the server.
  */
 import { useCallback, useRef, useState } from "react";
 import { api } from "./api.ts";
-import { connectVoice, setMicMuted, type DataMessage, type VoiceHandle } from "./livekit.ts";
-
-// re-export for convenience in App when wiring connect()
-export type { VoiceHandle };
+import type { VoiceTransport } from "./voice-transport.ts";
+import { WebTransport } from "./web-transport.ts";
+import { NativeTransport } from "./native-transport.ts";
 
 export type Toast = { id: number; kind: "error" | "info"; source?: string; message: string };
 
@@ -25,63 +26,131 @@ type ConnectOptions = {
   turnMode: "vad" | "manual";
 };
 
+/**
+ * Pick a transport based on the runtime environment. The Android wrapper
+ * exposes window.AndroidVoiceBridge; everything else (browser, iOS, PWA)
+ * falls through to the LiveKit Web SDK. Selection is one-time per
+ * useVoice() session — we never switch transports mid-session.
+ */
+function pickTransport(): VoiceTransport {
+  if (typeof window !== "undefined" && window.AndroidVoiceBridge) {
+    console.log("[voice] using NativeTransport (Android wrapper)");
+    return new NativeTransport();
+  }
+  console.log("[voice] using WebTransport (LiveKit Web SDK)");
+  return new WebTransport();
+}
+
 export function useVoice() {
   const [state, setState] = useState<VoiceState>({ kind: "idle" });
   const [log, setLog] = useState<string[]>([]);
   const [micMuted, setMicMutedState] = useState<boolean>(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const toastIdRef = useRef(0);
-  const handleRef = useRef<VoiceHandle | null>(null);
+  const transportRef = useRef<VoiceTransport | null>(null);
 
   const append = useCallback((line: string) => {
     setLog((prev) => [...prev.slice(-99), `${new Date().toLocaleTimeString()}  ${line}`]);
   }, []);
 
-  const pushToast = useCallback((msg: DataMessage) => {
-    const id = ++toastIdRef.current;
-    setToasts((prev) => [...prev, { id, kind: msg.kind, source: msg.source, message: msg.message }]);
-    // auto-dismiss after 8s — error toasts are sticky enough for the user to read
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 8000);
-  }, []);
+  const pushToast = useCallback(
+    (kind: "error" | "info", source: string | undefined, message: string) => {
+      const id = ++toastIdRef.current;
+      setToasts((prev) => [...prev, { id, kind, source, message }]);
+      setTimeout(() => {
+        setToasts((prev) => prev.filter((t) => t.id !== id));
+      }, 8000);
+    },
+    [],
+  );
 
   const dismissToast = useCallback((id: number) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
+  /**
+   * Subscribe React state to the transport's event stream. Listeners are
+   * scoped to the transport instance, which is dropped on disconnect, so
+   * we don't bother tracking unsubscribe handles here — when the transport
+   * goes out of scope the Map of listeners goes with it.
+   */
+  const wireTransport = useCallback(
+    (transport: VoiceTransport) => {
+      transport.on("connected", () => append("connected"));
+      transport.on("disconnected", (ev) => {
+        append(`disconnected: ${ev.reason}`);
+        // Mid-session disconnect (server kick / network loss). User-
+        // initiated disconnects come through the same path with reason="user"
+        // and the toast suppression below keeps that case quiet.
+        if (ev.reason !== "user") {
+          pushToast(
+            "error",
+            "WebRTC",
+            `Voice link dropped (${ev.reason}). Reconnect from Sessions tab.`,
+          );
+        }
+      });
+      transport.on("reconnecting", () => {
+        append("reconnecting…");
+        pushToast("info", "WebRTC", "Voice link reconnecting…");
+      });
+      transport.on("reconnected", () => {
+        append("reconnected");
+        pushToast("info", "WebRTC", "Voice link restored.");
+      });
+      transport.on("data", (ev) => {
+        // The worker publishes {kind, source?, message} on the data
+        // channel — surface as a toast if it parses cleanly.
+        const msg = ev.message;
+        if (
+          msg &&
+          (msg.kind === "error" || msg.kind === "info") &&
+          typeof msg.message === "string"
+        ) {
+          pushToast(msg.kind, msg.source, msg.message);
+        }
+      });
+      transport.on("error", (ev) => {
+        append(`error: ${ev.source}: ${ev.message}`);
+        pushToast("error", ev.source, ev.message);
+      });
+      transport.on("mic-state", (ev) => {
+        setMicMutedState(ev.muted);
+      });
+    },
+    [append, pushToast],
+  );
+
   const connect = useCallback(
     async (socketPath: string, opts: ConnectOptions) => {
       append(`select ${socketPath} (mode=${opts.turnMode})`);
       setState({ kind: "connecting", socketPath });
-      const startMicEnabled = opts.turnMode === "vad";
-      setMicMutedState(!startMicEnabled);
+      setMicMutedState(opts.turnMode === "manual");
       try {
-        if (handleRef.current) {
-          await handleRef.current.disconnect();
-          handleRef.current = null;
+        if (transportRef.current) {
+          await transportRef.current.disconnect();
+          transportRef.current = null;
         }
         const dispatch = await api.selectSession(socketPath);
         append(`room=${dispatch.roomName}`);
-        const handle = await connectVoice(dispatch, append, {
-          startMicEnabled,
-          onMessage: pushToast,
-        });
-        handleRef.current = handle;
+        const transport = pickTransport();
+        wireTransport(transport);
+        await transport.connect({ dispatch, turnMode: opts.turnMode });
+        transportRef.current = transport;
         setState({ kind: "connected", socketPath });
       } catch (err: any) {
         append(`error: ${err.message}`);
         setState({ kind: "error", socketPath, message: err.message });
       }
     },
-    [append],
+    [append, wireTransport],
   );
 
   const disconnect = useCallback(async () => {
     append("disconnecting");
-    if (handleRef.current) {
-      await handleRef.current.disconnect();
-      handleRef.current = null;
+    if (transportRef.current) {
+      await transportRef.current.disconnect();
+      transportRef.current = null;
     }
     await api.releaseSession();
     setState({ kind: "idle" });
@@ -90,18 +159,18 @@ export function useVoice() {
   }, [append]);
 
   const toggleMic = useCallback(async () => {
-    if (!handleRef.current) return;
+    if (!transportRef.current) return;
     const next = !micMuted;
-    await setMicMuted(handleRef.current, next);
+    await transportRef.current.setMicMuted(next);
     setMicMutedState(next);
     append(next ? "mic muted" : "mic unmuted (talk now)");
   }, [append, micMuted]);
 
   const setMicMutedExplicit = useCallback(
     async (muted: boolean) => {
-      if (!handleRef.current) return;
+      if (!transportRef.current) return;
       if (muted === micMuted) return;
-      await setMicMuted(handleRef.current, muted);
+      await transportRef.current.setMicMuted(muted);
       setMicMutedState(muted);
       append(muted ? "mic muted (mode change)" : "mic unmuted (mode change)");
     },
