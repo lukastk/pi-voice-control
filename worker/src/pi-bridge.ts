@@ -174,6 +174,14 @@ export class PiSocket {
       this.currentReject(new SteeredError());
       this.currentReject = null;
     }
+    // Important: clear the event handler too. Otherwise Pi continues to
+    // emit text_delta / agent_end for the abandoned turn, the (stale)
+    // handler routes them to a closed controller, and the next prompt's
+    // accounting gets corrupted.
+    this.eventHandler = null;
+    // Don't flip busy=false — Pi is still finishing the abandoned turn
+    // server-side. The next prompt() call will reuse the connection and
+    // overwrite eventHandler when its response starts.
   }
 
   /**

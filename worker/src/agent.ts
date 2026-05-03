@@ -164,6 +164,10 @@ class VoiceBridgeAgent extends voice.Agent {
     // current speech disrupts pipelineReply's progressive TTS playback,
     // and the user only hears the assistant's reply at the very end.
     let playOutAfterStreamClose = false;
+    // Lifted out of start() so cancel() can also flip it — once cancel
+    // fires, residual text_delta events from the abandoned Pi turn must
+    // not crash the enqueue path.
+    let controllerClosed = false;
 
     return new NodeReadableStream<string | llm.ChatChunk>({
       async start(controller) {
@@ -171,27 +175,52 @@ class VoiceBridgeAgent extends voice.Agent {
         const tagParser = new SpokenTagParser();
         let fullText = "";
         let spokenCount = 0;
+        let emitCount = 0;
+        let emitChars = 0;
+        let deltaCount = 0;
         let lastEmit = Date.now();
         let toolActive = false;
+
+        const safeEnqueue = (chunk: string) => {
+          if (controllerClosed) return false;
+          try {
+            controller.enqueue(chunk);
+            return true;
+          } catch (err) {
+            // Controller closed (e.g. consumer cancelled). Don't crash the
+            // pi.prompt loop on residual events from an abandoned turn.
+            controllerClosed = true;
+            logger.warn({ err: (err as Error)?.message }, "[VoiceBridgeAgent] enqueue failed; controller closed");
+            return false;
+          }
+        };
 
         const emit = (raw: string) => {
           const cleaned = cleanForSpeech(raw);
           if (!cleaned) return;
-          controller.enqueue(cleaned + " ");
-          lastEmit = Date.now();
+          if (safeEnqueue(cleaned + " ")) {
+            emitCount++;
+            emitChars += cleaned.length;
+            lastEmit = Date.now();
+          }
         };
 
         const callbacks: PiCallbacks = {
           onTextDelta(delta) {
+            deltaCount++;
             fullText += delta;
             for (const tag of tagParser.feed(delta)) {
               spokenCount++;
+              logger.info(
+                { len: tag.length, preview: tag.slice(0, 60) },
+                "[VoiceBridgeAgent] <spoken> tag → TTS",
+              );
               emit(tag);
             }
           },
           onToolStart(toolName) {
             toolActive = true;
-            controller.enqueue(toolStatusMessage(toolName));
+            safeEnqueue(toolStatusMessage(toolName));
             lastEmit = Date.now();
           },
           onToolEnd() {
@@ -206,23 +235,38 @@ class VoiceBridgeAgent extends voice.Agent {
 
         const keepalive = setInterval(() => {
           if (toolActive && Date.now() - lastEmit > 7000) {
-            controller.enqueue("Still working. ");
+            safeEnqueue("Still working. ");
             lastEmit = Date.now();
           }
         }, 3000);
 
         try {
           if (isInterruption && userText !== pi.currentPromptText) {
-            controller.enqueue("Got it. ");
+            safeEnqueue("Got it. ");
             lastEmit = Date.now();
           }
           await pi.prompt(userText, callbacks, isInterruption);
 
           if (spokenCount === 0 && fullText.trim()) {
-            logger.warn("[VoiceBridgeAgent] no <spoken> tags — falling back to cleaned text");
+            logger.warn(
+              { fullTextLen: fullText.length, deltaCount },
+              "[VoiceBridgeAgent] no <spoken> tags — falling back to cleaned text",
+            );
             for (const chunk of chunker.feed(fullText)) emit(chunk);
             for (const chunk of chunker.flush()) emit(chunk);
           }
+
+          logger.info(
+            {
+              deltaCount,
+              fullTextLen: fullText.length,
+              spokenCount,
+              emitCount,
+              emitChars,
+              controllerClosed,
+            },
+            "[VoiceBridgeAgent] turn complete",
+          );
         } catch (err) {
           if (err instanceof SteeredError) {
             logger.info("[VoiceBridgeAgent] interrupted by newer voice turn");
@@ -237,21 +281,28 @@ class VoiceBridgeAgent extends voice.Agent {
           }
         } finally {
           clearInterval(keepalive);
-          controller.close();
+          if (!controllerClosed) {
+            try {
+              controller.close();
+            } catch {
+              // already closed by cancel — fine
+            }
+            controllerClosed = true;
+          }
           // Now that pipelineReply has consumed close(), it will finish on
           // its own. Queueing the "out" earcon here means it lands behind a
           // pipelineReply that is already wrapping up, not one mid-stream.
           if (playOutAfterStreamClose) {
-            // Small delay to ensure pipelineReply's TTS has truly drained
-            // before we enqueue another SpeechHandle.
             setTimeout(() => playEarcon(session, "out"), 200);
           }
         }
       },
-      cancel() {
+      cancel(reason) {
         // LiveKit cancels the LLM stream when the user interrupts (barge-in
-        // or new turn). We don't abort Pi — the next llmNode call will steer.
-        log().info("[VoiceBridgeAgent] stream cancelled");
+        // or new turn). Mark the controller closed so our enqueue path
+        // becomes a no-op for any text Pi keeps sending after this point.
+        controllerClosed = true;
+        log().info({ reason: String(reason ?? "") }, "[VoiceBridgeAgent] stream cancelled");
         pi.abandonCurrentPrompt();
       },
     });

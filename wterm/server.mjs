@@ -13,7 +13,9 @@ if (isNaN(port))
 if (!tmuxSocket)
   throw new Error("TMUX_SOCKET environment variable is required");
 
-const host = "0.0.0.0";
+// Bind localhost only — Tailscale Serve listens on the Tailnet interface
+// at the same port and forwards to localhost. 0.0.0.0 would collide.
+const host = process.env.WTERM_BIND ?? "127.0.0.1";
 const baseDir = process.cwd();
 
 const indexHtml = readFileSync(join(baseDir, "index.html"), "utf-8");

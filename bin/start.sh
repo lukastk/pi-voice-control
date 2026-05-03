@@ -99,7 +99,10 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 echo -e "${GREEN}1.${NC} starting livekit-server (dev)"
-livekit-server --dev --bind 0.0.0.0 >/tmp/voice-agent-bridge-livekit.log 2>&1 &
+# Bind localhost only — Tailscale Serve, if active, listens on the Tailnet
+# interface at the same port and forwards to localhost. Binding 0.0.0.0
+# would collide with Tailscale Serve and abort livekit on startup.
+livekit-server --dev --bind 127.0.0.1 >/tmp/voice-agent-bridge-livekit.log 2>&1 &
 PIDS+=($!)
 
 # Brief grace for livekit-server to bind sockets before the worker tries to register.
