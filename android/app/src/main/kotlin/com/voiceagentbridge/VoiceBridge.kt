@@ -180,11 +180,29 @@ class VoiceBridge(
                     }
                     is RoomEvent.Reconnecting -> emit("reconnecting", JSONObject())
                     is RoomEvent.Reconnected -> emit("reconnected", JSONObject())
+                    is RoomEvent.TrackSubscribed -> {
+                        // Diagnostic: the agent in livekit-agents cycles
+                        // tracks between utterances (earcons / replies),
+                        // and we want to know if any post-first-utterance
+                        // track is failing to start playback. The SDK
+                        // auto-plays subscribed audio, so we don't take
+                        // any action — just log.
+                        Log.i(
+                            TAG,
+                            "TrackSubscribed kind=${ev.track.kind} sid=${ev.publication.sid}",
+                        )
+                    }
+                    is RoomEvent.TrackUnsubscribed -> {
+                        Log.i(
+                            TAG,
+                            "TrackUnsubscribed kind=${ev.track.kind} sid=${ev.publications.sid}",
+                        )
+                    }
                     else -> {
                         // RoomEvent.Connected fires too but we already emit
                         // "connected" deterministically when r.connect()
-                        // returns, to avoid sending duplicates. Track + Data
-                        // events are wired in Phase 9.3 / 9.5.
+                        // returns, to avoid sending duplicates. Data events
+                        // are wired in Phase 9.5.
                     }
                 }
             }

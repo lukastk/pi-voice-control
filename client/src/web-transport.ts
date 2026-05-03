@@ -85,10 +85,20 @@ export class WebTransport extends VoiceEventEmitter implements VoiceTransport {
       .on(RoomEvent.TrackSubscribed, (track: RemoteTrack) => {
         if (track.kind === Track.Kind.Audio) {
           (track as RemoteAudioTrack).attach(audioElement);
+          console.log("[WebTransport] audio track subscribed", track.sid);
         }
       })
       .on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack) => {
-        track.detach().forEach((el) => el.remove());
+        // Detach the track from any elements but DON'T remove the
+        // elements themselves. The agent cycles tracks between utterances
+        // (earcons / pipelineReply / tool replies in livekit-agents);
+        // removing our shared audioElement on every unsubscribe meant
+        // the next track had nowhere to play, so anything past the first
+        // utterance was silent. The element is cleaned up in disconnect().
+        track.detach();
+        if (track.kind === Track.Kind.Audio) {
+          console.log("[WebTransport] audio track unsubscribed", track.sid);
+        }
       })
       .on(RoomEvent.DataReceived, (payload, _participant, _kind, topic) => {
         try {
