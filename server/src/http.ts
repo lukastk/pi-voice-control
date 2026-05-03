@@ -18,6 +18,7 @@ import {
   appendSystemPromptToSocket,
   clearSystemPromptOnSocket,
 } from "./prompt/inject.ts";
+import { expandTilde } from "./util/path.ts";
 
 const WTERM_PORT = Number(process.env.WTERM_PORT ?? 7891);
 
@@ -124,7 +125,7 @@ export function mountApi(app: Hono) {
    */
   app.get("/api/sessions/default", async (c) => {
     const cfg = getConfig();
-    const folder = cfg.startup.defaultFolder;
+    const folder = cfg.startup.defaultFolder ? expandTilde(cfg.startup.defaultFolder) : null;
     if (!folder) return c.json({ kind: "none" });
 
     let sessions = getSessionsSnapshot();

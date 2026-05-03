@@ -3,14 +3,16 @@
  */
 import { realpathSync } from "node:fs";
 import type { PiSession } from "./types.ts";
+import { expandTilde } from "../util/path.ts";
 
 /**
- * Compare two filesystem paths after realpath-ing both. Returns false if
- * either path can't be resolved (e.g. the cwd no longer exists).
+ * Compare two filesystem paths after tilde-expanding and realpath-ing both.
+ * Returns false if either path can't be resolved (e.g. the cwd no longer
+ * exists).
  */
 export function sameFolder(a: string, b: string): boolean {
   try {
-    return realpathSync(a) === realpathSync(b);
+    return realpathSync(expandTilde(a)) === realpathSync(expandTilde(b));
   } catch {
     return false;
   }

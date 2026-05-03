@@ -6,21 +6,16 @@
  * intermediate directories exist.
  */
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname } from "node:path";
 import { getConfig } from "../config/store.ts";
 import { DEFAULT_VOICE_PROMPT } from "./default.ts";
+import { expandTilde } from "../util/path.ts";
 
 export type PromptSnapshot = {
   path: string;
   body: string;
   mtime: number;
 };
-
-function expandTilde(p: string): string {
-  if (p.startsWith("~/")) return p.replace(/^~/, homedir());
-  return p;
-}
 
 export function promptFilePath(): string {
   return expandTilde(getConfig().prompt.filePath);
