@@ -15,9 +15,10 @@ import {
   log,
   voice,
 } from "@livekit/agents";
-import { STT as OpenAISTT } from "@livekit/agents-plugin-openai";
+import { STT as OpenAISTT, TTS as OpenAITTS } from "@livekit/agents-plugin-openai";
 import { STT as DeepgramSTT } from "@livekit/agents-plugin-deepgram";
 import { TTS as ElevenLabsTTS } from "@livekit/agents-plugin-elevenlabs";
+import { TTS as CartesiaTTS } from "@livekit/agents-plugin-cartesia";
 import * as silero from "@livekit/agents-plugin-silero";
 import { fileURLToPath } from "node:url";
 import { ReadableStream as NodeReadableStream } from "node:stream/web";
@@ -53,11 +54,18 @@ type SttConfig = {
   language: string;
 };
 
+type TtsConfig = {
+  provider: "elevenlabs" | "openai" | "cartesia";
+  model: string;
+  voiceId: string;
+};
+
 type JobMetadata = {
   socketPath: string;
   appendSystemPrompt?: string; // overrides default if provided
   earcons?: EarconConfig;
   stt?: SttConfig;
+  tts?: TtsConfig;
 };
 
 const DEFAULT_EARCONS: EarconConfig = {
@@ -278,8 +286,6 @@ export default defineAgent({
     const stt =
       sttCfg.provider === "deepgram"
         ? new DeepgramSTT({
-            // STTModels is a strict literal union in the plugin; cast since we
-            // accept a free-form string from config and let runtime validate.
             model: (sttCfg.model || "nova-3") as any,
             language: sttCfg.language || "en",
           })
@@ -289,14 +295,36 @@ export default defineAgent({
           });
     logger.info({ stt: sttCfg }, "[worker] STT configured");
 
+    const ttsCfg =
+      meta.tts ?? {
+        provider: "elevenlabs",
+        model: "eleven_flash_v2_5",
+        voiceId: process.env.ELEVENLABS_VOICE_ID || "CwhRBWXzGAHq8TQ4Fs17",
+      };
+    let tts: any;
+    if (ttsCfg.provider === "openai") {
+      tts = new OpenAITTS({
+        model: (ttsCfg.model || "gpt-4o-mini-tts") as any,
+        voice: (ttsCfg.voiceId || "alloy") as any,
+      });
+    } else if (ttsCfg.provider === "cartesia") {
+      tts = new CartesiaTTS({
+        model: (ttsCfg.model || "sonic-3") as any,
+        voice: ttsCfg.voiceId || undefined,
+      });
+    } else {
+      tts = new ElevenLabsTTS({
+        model: (ttsCfg.model || "eleven_flash_v2_5") as any,
+        voiceId: ttsCfg.voiceId || "CwhRBWXzGAHq8TQ4Fs17",
+      });
+    }
+    logger.info({ tts: ttsCfg }, "[worker] TTS configured");
+
     const agent = new VoiceBridgeAgent(pi);
     const session = new voice.AgentSession({
       vad: ctx.proc.userData.vad as silero.VAD,
       stt,
-      tts: new ElevenLabsTTS({
-        model: "eleven_flash_v2_5",
-        voiceId: process.env.ELEVENLABS_VOICE_ID || "CwhRBWXzGAHq8TQ4Fs17",
-      }),
+      tts,
     });
 
     session.on(voice.AgentSessionEventTypes.UserInputTranscribed, (ev) => {

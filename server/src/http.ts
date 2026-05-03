@@ -80,6 +80,7 @@ export function mountApi(app: Hono) {
         appendSystemPrompt: appendedPrompt,
         earcons: cfg.voice.earcons,
         stt: cfg.voice.stt,
+        tts: cfg.voice.tts,
       });
       setCurrentTarget({
         socketPath,

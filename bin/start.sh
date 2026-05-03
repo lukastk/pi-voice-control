@@ -86,9 +86,14 @@ cleanup() {
       kill -9 "$pid" 2>/dev/null || true
     fi
   done
-  # extra guard for orphaned subprocesses scoped to this repo
+  # extra guards for orphaned subprocesses scoped to this repo
   pkill -f "$PWD/worker/src/agent.ts" 2>/dev/null || true
   pkill -f "$PWD/wterm/server.mjs" 2>/dev/null || true
+  # rtc-node sometimes leaves a job_proc_lazy_main.js worker behind after a
+  # native cleanup race ("libc++abi: mutex lock failed"). Force-kill any
+  # node processes that look like ours to keep ports free for the next run.
+  sleep 0.3
+  pkill -9 -f "job_proc_lazy_main.js.*worker/src/agent.ts" 2>/dev/null || true
   echo -e "${GREEN}done.${NC}"
 }
 trap cleanup EXIT INT TERM

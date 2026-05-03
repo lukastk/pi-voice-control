@@ -29,6 +29,11 @@ export type Config = {
       model: string;
       language: string;
     };
+    tts: {
+      provider: "elevenlabs" | "openai" | "cartesia";
+      model: string;
+      voiceId: string;
+    };
     turnMode: "vad" | "manual";
   };
 };

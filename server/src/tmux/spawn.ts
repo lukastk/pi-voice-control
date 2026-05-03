@@ -11,7 +11,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { readdirSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 export type SpawnOptions = {
   tmuxSocketName: string;
@@ -22,6 +22,17 @@ export type SpawnOptions = {
   timeoutMs?: number; // default 30000
 };
 
+function makeWindowName(folder: string): string {
+  // <folder-basename>-<HHMM> — folder gives context, time disambiguates
+  // multiple windows in the same folder so they don't collide in the tmux
+  // window list and the user can tell them apart in the picker.
+  const base = basename(folder.replace(/\/+$/, "")) || "pi";
+  const safe = base.replace(/[^a-zA-Z0-9_.-]/g, "-").slice(0, 24);
+  const d = new Date();
+  const hhmm = `${String(d.getHours()).padStart(2, "0")}${String(d.getMinutes()).padStart(2, "0")}${String(d.getSeconds()).padStart(2, "0")}`;
+  return `${safe}-${hhmm}`;
+}
+
 export async function spawnPiInFolder(opts: SpawnOptions): Promise<string> {
   const piCmd = opts.piCommand ?? "pi";
   const timeoutMs = opts.timeoutMs ?? 30000;
@@ -30,7 +41,11 @@ export async function spawnPiInFolder(opts: SpawnOptions): Promise<string> {
 
   ensureTmuxSession(opts.tmuxSocketName, opts.spawnTmuxSession, opts.folder);
 
-  // Spawn the new window.
+  const windowName = makeWindowName(opts.folder);
+
+  // Spawn the new window with a distinctive name so multiple Pi sessions in
+  // the same folder are tellable apart in the picker UI and tmux's window
+  // list (instead of all showing up as the default command name like "node").
   execFileSync(
     "tmux",
     [
@@ -41,6 +56,8 @@ export async function spawnPiInFolder(opts: SpawnOptions): Promise<string> {
       opts.spawnTmuxSession,
       "-c",
       opts.folder,
+      "-n",
+      windowName,
       piCmd,
     ],
     { stdio: "ignore", timeout: 5000 },

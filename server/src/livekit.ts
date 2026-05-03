@@ -38,12 +38,19 @@ export type SttConfig = {
   language: string;
 };
 
+export type TtsConfig = {
+  provider: "elevenlabs" | "openai" | "cartesia";
+  model: string;
+  voiceId: string;
+};
+
 export async function dispatchVoiceAgent(opts: {
   socketPath: string;
   appendSystemPrompt?: string;
   identity?: string;
   earcons?: EarconConfig;
   stt?: SttConfig;
+  tts?: TtsConfig;
 }): Promise<DispatchResult> {
   const roomName = `voice-${cryptoRandomShort()}`;
   const identity = opts.identity ?? "user";
@@ -54,6 +61,7 @@ export async function dispatchVoiceAgent(opts: {
       appendSystemPrompt: opts.appendSystemPrompt,
       earcons: opts.earcons,
       stt: opts.stt,
+      tts: opts.tts,
     }),
   });
 

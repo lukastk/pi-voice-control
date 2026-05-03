@@ -77,5 +77,16 @@ export function useVoice() {
     append(next ? "mic muted" : "mic unmuted (talk now)");
   }, [append, micMuted]);
 
-  return { state, log, connect, disconnect, micMuted, toggleMic };
+  const setMicMutedExplicit = useCallback(
+    async (muted: boolean) => {
+      if (!handleRef.current) return;
+      if (muted === micMuted) return;
+      await setMicMuted(handleRef.current, muted);
+      setMicMutedState(muted);
+      append(muted ? "mic muted (mode change)" : "mic unmuted (mode change)");
+    },
+    [append, micMuted],
+  );
+
+  return { state, log, connect, disconnect, micMuted, toggleMic, setMicMutedExplicit };
 }

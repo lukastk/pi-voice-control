@@ -27,6 +27,22 @@ export function App() {
     if (v.kind !== "connected") return null;
     return server.sessions.find((s) => s.socketPath === v.socketPath) ?? null;
   }, [voice.state, server.sessions]);
+
+  const turnMode = server.config?.voice.turnMode ?? "vad";
+  async function toggleTurnMode() {
+    if (!server.config) return;
+    const next: "vad" | "manual" = turnMode === "vad" ? "manual" : "vad";
+    try {
+      await api.putConfig({ voice: { turnMode: next } });
+      // If connected, immediately adjust mic state to match new mode so the
+      // user doesn't have to reconnect to feel the change.
+      if (voice.state.kind === "connected") {
+        await voice.setMicMutedExplicit(next === "manual");
+      }
+    } catch (err: any) {
+      console.error("[turn-mode] toggle failed:", err);
+    }
+  }
   const [resolveStatus, setResolveStatus] = useState<string | null>(null);
   const lastResolvedFolder = useRef<string | null | undefined>(undefined);
 
@@ -72,7 +88,18 @@ export function App() {
           </button>
         ))}
         <div className="tabbar-spacer" />
-        {voice.state.kind === "connected" && server.config?.voice.turnMode === "manual" && (
+        <button
+          className={`mode-btn mode-${turnMode}`}
+          onClick={toggleTurnMode}
+          title={
+            turnMode === "vad"
+              ? "Auto-detect end of speech via VAD. Click to switch to push-to-talk."
+              : "Push-to-talk: mic stays muted until you tap Talk. Click to switch to VAD."
+          }
+        >
+          {turnMode === "vad" ? "VAD" : "PTT"}
+        </button>
+        {voice.state.kind === "connected" && turnMode === "manual" && (
           <button
             className={`talk-btn ${voice.micMuted ? "" : "talk-btn-active"}`}
             onClick={() => voice.toggleMic()}

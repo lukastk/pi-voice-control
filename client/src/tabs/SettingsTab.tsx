@@ -18,6 +18,9 @@ export function SettingsTab({ config }: Props) {
   const [sttProvider, setSttProvider] = useState<"openai-whisper" | "deepgram">("openai-whisper");
   const [sttModel, setSttModel] = useState("whisper-1");
   const [sttLanguage, setSttLanguage] = useState("en");
+  const [ttsProvider, setTtsProvider] = useState<"elevenlabs" | "openai" | "cartesia">("elevenlabs");
+  const [ttsModel, setTtsModel] = useState("eleven_flash_v2_5");
+  const [ttsVoice, setTtsVoice] = useState("CwhRBWXzGAHq8TQ4Fs17");
   const [turnMode, setTurnMode] = useState<"vad" | "manual">("vad");
 
   const [savedAt, setSavedAt] = useState<number | null>(null);
@@ -37,6 +40,9 @@ export function SettingsTab({ config }: Props) {
     setSttProvider(config.voice.stt.provider);
     setSttModel(config.voice.stt.model);
     setSttLanguage(config.voice.stt.language);
+    setTtsProvider(config.voice.tts.provider);
+    setTtsModel(config.voice.tts.model);
+    setTtsVoice(config.voice.tts.voiceId);
     setTurnMode(config.voice.turnMode);
   }, [config]);
 
@@ -63,6 +69,11 @@ export function SettingsTab({ config }: Props) {
             model: sttModel || (sttProvider === "deepgram" ? "nova-3" : "whisper-1"),
             language: sttLanguage || "en",
           },
+          tts: {
+            provider: ttsProvider,
+            model: ttsModel || ttsDefaultModel(ttsProvider),
+            voiceId: ttsVoice || ttsDefaultVoice(ttsProvider),
+          },
           turnMode,
         },
       });
@@ -70,6 +81,27 @@ export function SettingsTab({ config }: Props) {
     } catch (err: any) {
       setError(err.message);
     }
+  }
+
+  function ttsDefaultModel(p: "elevenlabs" | "openai" | "cartesia"): string {
+    if (p === "openai") return "gpt-4o-mini-tts";
+    if (p === "cartesia") return "sonic-3";
+    return "eleven_flash_v2_5";
+  }
+
+  function ttsDefaultVoice(p: "elevenlabs" | "openai" | "cartesia"): string {
+    if (p === "openai") return "alloy";
+    if (p === "cartesia") return "";
+    return "CwhRBWXzGAHq8TQ4Fs17";
+  }
+
+  function onTtsProviderChange(p: "elevenlabs" | "openai" | "cartesia") {
+    setTtsProvider(p);
+    // Auto-fill if user hadn't customized model/voice for this provider.
+    const knownModels = ["eleven_flash_v2_5", "gpt-4o-mini-tts", "tts-1", "sonic-3", ""];
+    if (knownModels.includes(ttsModel)) setTtsModel(ttsDefaultModel(p));
+    const knownVoices = ["CwhRBWXzGAHq8TQ4Fs17", "alloy", "echo", "fable", "onyx", "nova", "shimmer", ""];
+    if (knownVoices.includes(ttsVoice)) setTtsVoice(ttsDefaultVoice(p));
   }
 
   function onProviderChange(p: "openai-whisper" | "deepgram") {
@@ -181,6 +213,56 @@ export function SettingsTab({ config }: Props) {
             style={inputStyle}
           />
           <p style={hintStyle}>ISO 639-1 code, e.g. en, de, fr.</p>
+        </Field>
+      </Section>
+
+      <Section title="Speech synthesis (TTS)">
+        <Field label="Provider">
+          <select
+            value={ttsProvider}
+            onChange={(e) => onTtsProviderChange(e.target.value as "elevenlabs" | "openai" | "cartesia")}
+            style={inputStyle}
+          >
+            <option value="elevenlabs">ElevenLabs (uses ELEVENLABS_API_KEY / ELEVEN_API_KEY)</option>
+            <option value="openai">OpenAI TTS (uses OPENAI_API_KEY)</option>
+            <option value="cartesia">Cartesia (uses CARTESIA_API_KEY)</option>
+          </select>
+          <p style={hintStyle}>
+            Note: Deepgram is not a TTS provider — it only does STT. Make sure the matching env
+            var is set. Takes effect on the next voice connection.
+          </p>
+        </Field>
+        <Field label="Model">
+          <input
+            type="text"
+            value={ttsModel}
+            onChange={(e) => setTtsModel(e.target.value)}
+            placeholder={ttsDefaultModel(ttsProvider)}
+            style={inputStyle}
+          />
+          <p style={hintStyle}>
+            {ttsProvider === "elevenlabs"
+              ? 'Try "eleven_flash_v2_5" (low-latency) or "eleven_multilingual_v2".'
+              : ttsProvider === "openai"
+              ? 'Try "gpt-4o-mini-tts" (recommended) or "tts-1".'
+              : 'Try "sonic-3" (newest) or "sonic-2".'}
+          </p>
+        </Field>
+        <Field label="Voice ID">
+          <input
+            type="text"
+            value={ttsVoice}
+            onChange={(e) => setTtsVoice(e.target.value)}
+            placeholder={ttsDefaultVoice(ttsProvider)}
+            style={inputStyle}
+          />
+          <p style={hintStyle}>
+            {ttsProvider === "elevenlabs"
+              ? "ElevenLabs voice ID (20-char alphanumeric)."
+              : ttsProvider === "openai"
+              ? 'One of: alloy, echo, fable, onyx, nova, shimmer.'
+              : "Cartesia voice ID (UUID), or leave empty for the plugin's default."}
+          </p>
         </Field>
       </Section>
 

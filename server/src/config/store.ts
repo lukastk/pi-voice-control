@@ -39,6 +39,11 @@ export type Config = {
       model: string;       // openai: "whisper-1"; deepgram: "nova-3" / "nova-2-general"
       language: string;    // ISO code, e.g. "en"
     };
+    tts: {
+      provider: "elevenlabs" | "openai" | "cartesia";
+      model: string;       // elevenlabs: "eleven_flash_v2_5"; openai: "tts-1"/"gpt-4o-mini-tts"; cartesia: "sonic-3"
+      voiceId: string;     // provider-specific voice id
+    };
     turnMode: "vad" | "manual";
   };
 };
@@ -71,6 +76,11 @@ export const DEFAULTS: Config = {
       provider: "openai-whisper",
       model: "whisper-1",
       language: "en",
+    },
+    tts: {
+      provider: "elevenlabs",
+      model: "eleven_flash_v2_5",
+      voiceId: "CwhRBWXzGAHq8TQ4Fs17",
     },
     turnMode: "vad",
   },
