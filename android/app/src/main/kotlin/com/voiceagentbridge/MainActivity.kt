@@ -44,9 +44,11 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        // Volume rocker should control media volume (the stream the
-        // foreground service claims focus on), not the ringer.
-        volumeControlStream = AudioManager.STREAM_MUSIC
+        // The foreground service puts us in MODE_IN_COMMUNICATION, so the
+        // volume rocker should control the VOICE_CALL stream (where the
+        // WebView's audio actually plays in that mode), not media or
+        // ringer volume.
+        volumeControlStream = AudioManager.STREAM_VOICE_CALL
 
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
         webView = findViewById(R.id.webview)
