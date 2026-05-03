@@ -48,6 +48,7 @@ class VoiceBridge(
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     @Volatile private var room: Room? = null
+    @Volatile private var micMuted: Boolean = true
     private var eventsJob: Job? = null
 
     @JavascriptInterface
@@ -72,6 +73,23 @@ class VoiceBridge(
                 attachListeners(r)
                 r.connect(url, token, options = ConnectOptions())
                 room = r
+                // Publish (and set initial mute) before announcing
+                // "connected" so the JS layer sees a fully-set-up Room.
+                // Failure to publish is non-fatal: the Room is up, the
+                // agent just won't hear us.
+                try {
+                    r.localParticipant.setMicrophoneEnabled(!manualMode)
+                    micMuted = manualMode
+                } catch (t: Throwable) {
+                    Log.w(TAG, "setMicrophoneEnabled at connect failed: ${t.message}", t)
+                    emit(
+                        "error",
+                        JSONObject()
+                            .put("source", "audio")
+                            .put("message", "mic publish failed: ${t.message ?: t.javaClass.simpleName}"),
+                    )
+                    micMuted = true
+                }
                 emit("connected", JSONObject().put("roomName", roomName))
             } catch (t: Throwable) {
                 Log.w(TAG, "connect failed: ${t.message}", t)
@@ -98,15 +116,31 @@ class VoiceBridge(
 
     @JavascriptInterface
     fun setMicMuted(muted: Boolean) {
-        Log.i(TAG, "setMicMuted($muted) — wired in Phase 9.3")
+        Log.i(TAG, "setMicMuted($muted)")
+        scope.launch {
+            val r = room ?: return@launch
+            try {
+                r.localParticipant.setMicrophoneEnabled(!muted)
+                micMuted = muted
+                emit("mic-state", JSONObject().put("muted", muted))
+            } catch (t: Throwable) {
+                Log.w(TAG, "setMicMuted failed: ${t.message}", t)
+                emit(
+                    "error",
+                    JSONObject()
+                        .put("source", "audio")
+                        .put("message", "mic toggle failed: ${t.message ?: t.javaClass.simpleName}"),
+                )
+            }
+        }
     }
 
     @JavascriptInterface
     fun getStateJson(): String {
         return JSONObject()
             .put("connected", room != null)
-            .put("micMuted", true)
-            .put("phase", "9.2")
+            .put("micMuted", micMuted)
+            .put("phase", "9.3")
             .toString()
     }
 
@@ -119,6 +153,7 @@ class VoiceBridge(
             try { r.disconnect() } catch (_: Throwable) { /* best effort */ }
         }
         room = null
+        micMuted = true
         eventsJob?.cancel()
         eventsJob = null
         scope.cancel()
@@ -129,10 +164,20 @@ class VoiceBridge(
         eventsJob = scope.launch {
             r.events.collect { ev ->
                 when (ev) {
-                    is RoomEvent.Disconnected -> emit(
-                        "disconnected",
-                        JSONObject().put("reason", ev.reason?.name ?: "unknown"),
-                    )
+                    is RoomEvent.Disconnected -> {
+                        // SDK-initiated disconnect (server kick, network
+                        // loss). User-initiated paths go through
+                        // disposeRoom() which cancels this job before the
+                        // event fires, so this branch only runs for
+                        // unsolicited disconnects. Drop our refs so
+                        // getStateJson reflects reality.
+                        room = null
+                        micMuted = true
+                        emit(
+                            "disconnected",
+                            JSONObject().put("reason", ev.reason?.name ?: "unknown"),
+                        )
+                    }
                     is RoomEvent.Reconnecting -> emit("reconnecting", JSONObject())
                     is RoomEvent.Reconnected -> emit("reconnected", JSONObject())
                     else -> {
@@ -153,6 +198,7 @@ class VoiceBridge(
             try { r.disconnect() } catch (_: Throwable) { /* best effort */ }
         }
         room = null
+        micMuted = true
     }
 
     private fun emit(type: String, payload: JSONObject) {
