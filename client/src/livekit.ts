@@ -26,6 +26,25 @@ export async function connectVoice(
   log: (msg: string) => void,
   opts: { startMicEnabled: boolean; onMessage?: (msg: DataMessage) => void },
 ): Promise<VoiceHandle> {
+  // Secure-context preflight: getUserMedia is blocked on http:// from any
+  // non-localhost host. Without this, the browser throws an opaque
+  // "Cannot read properties of undefined (reading 'getUserMedia')" deep
+  // inside LiveKit's setMicrophoneEnabled, which the user has no way to
+  // map back to "I'm on http and need https".
+  const secureCtx =
+    typeof window === "undefined" ||
+    window.isSecureContext ||
+    window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1";
+  if (!secureCtx) {
+    const host = window.location.hostname;
+    throw new Error(
+      `Microphone access requires HTTPS on remote hosts. You're on http://${host} ` +
+        `which the browser treats as insecure. Run \`tailscale serve --bg --https=443 http://localhost:7890\` ` +
+        `(and the same for ports 7880 + 7891) on the Mac, then open https://${host}/ — see README "Tailscale + HTTPS".`,
+    );
+  }
+
   const room = new Room({
     audioCaptureDefaults: {
       autoGainControl: true,

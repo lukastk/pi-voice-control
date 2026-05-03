@@ -22,7 +22,24 @@ Open http://localhost:7890.
 
 The server binds `0.0.0.0` on ports 7890 (HTTP) and 7891 (wterm), plus livekit-server on 7880. On Tailnet, all three are reachable at `<tailnet-name>:<port>`.
 
-On Android Chrome, opening `http://<tailnet-name>:7890` gives an "Add to Home screen" prompt — the app installs as a PWA. **Caveat:** Android Chrome PWAs cannot run audio with the screen off. For pocket use, build the Android wrapper at `android/` (Phase 8 — a thin Kotlin WebView with a microphone foreground service).
+### Tailscale + HTTPS (required for mobile microphone)
+
+Mobile browsers refuse `getUserMedia` (microphone) on `http://` for any non-localhost host — that's a hard browser security policy, no flag fixes it. You need real HTTPS to use voice from a phone.
+
+The simplest fix is `tailscale serve`, which gives you a real cert for your Tailnet hostname automatically. From the repo root:
+
+```bash
+bin/tailscale-serve.sh         # serves 7890, 7880, 7891 over Tailscale HTTPS
+bin/tailscale-serve.sh --off   # tear it all down
+```
+
+Then open `https://<your-tailnet-name>/` on your phone — Connect voice will work. The same script is what you'd run after every `tailscale up` since serve config doesn't always survive reboots on macOS.
+
+If voice still fails with "Microphone access requires HTTPS on remote hosts", the script either didn't run or `tailscale serve status` shows nothing. Check with `tailscale serve status` and re-run the script.
+
+### Android Chrome PWA
+
+Opening `https://<tailnet>/` on Android Chrome gives an "Add to Home screen" prompt — the app installs as a PWA. **Caveat:** Android Chrome PWAs cannot run audio with the screen off. For pocket use, build the Android wrapper at `android/` (Phase 8 — a thin Kotlin WebView with a microphone foreground service).
 
 ## Layout
 
