@@ -34,14 +34,28 @@ export function App() {
     const next: "vad" | "manual" = turnMode === "vad" ? "manual" : "vad";
     try {
       await api.putConfig({ voice: { turnMode: next } });
-      // If connected, immediately adjust mic state to match new mode so the
-      // user doesn't have to reconnect to feel the change.
       if (voice.state.kind === "connected") {
         await voice.setMicMutedExplicit(next === "manual");
       }
     } catch (err: any) {
       console.error("[turn-mode] toggle failed:", err);
     }
+  }
+
+  /**
+   * Disconnect + reconnect the current voice target so freshly-saved STT/TTS
+   * settings take effect. Wired from SettingsTab's "Save & reconnect" button.
+   */
+  async function reconnectVoice() {
+    const v = voice.state;
+    if (v.kind !== "connected") return;
+    const socketPath = v.socketPath;
+    await voice.disconnect();
+    // Brief pause so the server's deleteDispatch lands before the new one.
+    await new Promise((r) => setTimeout(r, 400));
+    await voice.connect(socketPath, {
+      turnMode: server.config?.voice.turnMode ?? "vad",
+    });
   }
   const [resolveStatus, setResolveStatus] = useState<string | null>(null);
   const lastResolvedFolder = useRef<string | null | undefined>(undefined);
@@ -139,7 +153,13 @@ export function App() {
         {tab === "prompt" && (
           <PromptTab prompt={server.prompt} voiceConnected={voice.state.kind === "connected"} />
         )}
-        {tab === "settings" && <SettingsTab config={server.config} />}
+        {tab === "settings" && (
+          <SettingsTab
+            config={server.config}
+            voiceConnected={voice.state.kind === "connected"}
+            onReconnect={reconnectVoice}
+          />
+        )}
       </main>
     </div>
   );

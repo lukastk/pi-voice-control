@@ -1,9 +1,22 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, type Config } from "../api.ts";
+import {
+  STT_MODELS,
+  STT_LANGUAGES,
+  TTS_MODELS,
+  OPENAI_VOICES,
+  TTS_DEFAULT_MODEL,
+  TTS_DEFAULT_VOICE,
+  STT_DEFAULT_MODEL,
+} from "../voiceModels.ts";
 
-type Props = { config: Config | null };
+type Props = {
+  config: Config | null;
+  voiceConnected: boolean;
+  onReconnect: () => Promise<void>;
+};
 
-export function SettingsTab({ config }: Props) {
+export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
   const [defaultFolder, setDefaultFolder] = useState<string>("");
   const [tmuxSocket, setTmuxSocket] = useState<string>("");
   const [spawnIfMissing, setSpawnIfMissing] = useState<boolean>(true);
@@ -25,6 +38,7 @@ export function SettingsTab({ config }: Props) {
 
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [reconnecting, setReconnecting] = useState(false);
 
   useEffect(() => {
     if (!config) return;
@@ -46,7 +60,23 @@ export function SettingsTab({ config }: Props) {
     setTurnMode(config.voice.turnMode);
   }, [config]);
 
-  async function save() {
+  // Did the user change any setting that only takes effect on next dispatch?
+  // We compare the form state to the persisted config rather than tracking
+  // a dirty flag — that way SettingsTab survives StrictMode double-render.
+  const voiceSettingsDirty = useMemo(() => {
+    if (!config) return false;
+    return (
+      sttProvider !== config.voice.stt.provider ||
+      sttModel !== config.voice.stt.model ||
+      sttLanguage !== config.voice.stt.language ||
+      ttsProvider !== config.voice.tts.provider ||
+      ttsModel !== config.voice.tts.model ||
+      ttsVoice !== config.voice.tts.voiceId ||
+      turnMode !== config.voice.turnMode
+    );
+  }, [config, sttProvider, sttModel, sttLanguage, ttsProvider, ttsModel, ttsVoice, turnMode]);
+
+  async function save(): Promise<boolean> {
     setError(null);
     try {
       await api.putConfig({
@@ -66,53 +96,57 @@ export function SettingsTab({ config }: Props) {
           },
           stt: {
             provider: sttProvider,
-            model: sttModel || (sttProvider === "deepgram" ? "nova-3" : "whisper-1"),
+            model: sttModel || STT_DEFAULT_MODEL[sttProvider],
             language: sttLanguage || "en",
           },
           tts: {
             provider: ttsProvider,
-            model: ttsModel || ttsDefaultModel(ttsProvider),
-            voiceId: ttsVoice || ttsDefaultVoice(ttsProvider),
+            model: ttsModel || TTS_DEFAULT_MODEL[ttsProvider],
+            voiceId: ttsVoice || TTS_DEFAULT_VOICE[ttsProvider],
           },
           turnMode,
         },
       });
       setSavedAt(Date.now());
+      return true;
     } catch (err: any) {
       setError(err.message);
+      return false;
     }
   }
 
-  function ttsDefaultModel(p: "elevenlabs" | "openai" | "cartesia"): string {
-    if (p === "openai") return "gpt-4o-mini-tts";
-    if (p === "cartesia") return "sonic-3";
-    return "eleven_flash_v2_5";
+  async function saveAndReconnect() {
+    const ok = await save();
+    if (!ok) return;
+    setReconnecting(true);
+    try {
+      await onReconnect();
+    } finally {
+      setReconnecting(false);
+    }
   }
 
-  function ttsDefaultVoice(p: "elevenlabs" | "openai" | "cartesia"): string {
-    if (p === "openai") return "alloy";
-    if (p === "cartesia") return "";
-    return "CwhRBWXzGAHq8TQ4Fs17";
+  function onSttProviderChange(p: "openai-whisper" | "deepgram") {
+    setSttProvider(p);
+    const models = STT_MODELS[p] as readonly string[];
+    if (!models.includes(sttModel)) {
+      setSttModel(STT_DEFAULT_MODEL[p]);
+    }
   }
 
   function onTtsProviderChange(p: "elevenlabs" | "openai" | "cartesia") {
     setTtsProvider(p);
-    // Auto-fill if user hadn't customized model/voice for this provider.
-    const knownModels = ["eleven_flash_v2_5", "gpt-4o-mini-tts", "tts-1", "sonic-3", ""];
-    if (knownModels.includes(ttsModel)) setTtsModel(ttsDefaultModel(p));
-    const knownVoices = ["CwhRBWXzGAHq8TQ4Fs17", "alloy", "echo", "fable", "onyx", "nova", "shimmer", ""];
-    if (knownVoices.includes(ttsVoice)) setTtsVoice(ttsDefaultVoice(p));
-  }
-
-  function onProviderChange(p: "openai-whisper" | "deepgram") {
-    setSttProvider(p);
-    // Auto-fill the model with that provider's default if the user hasn't
-    // typed a custom one yet (or the previous model is the other provider's
-    // default).
-    if (p === "deepgram" && (sttModel === "" || sttModel === "whisper-1")) {
-      setSttModel("nova-3");
-    } else if (p === "openai-whisper" && (sttModel === "" || sttModel.startsWith("nova-"))) {
-      setSttModel("whisper-1");
+    const models = TTS_MODELS[p] as readonly string[];
+    if (!models.includes(ttsModel)) {
+      setTtsModel(TTS_DEFAULT_MODEL[p]);
+    }
+    // Voice resets only if it's a known catalogue voice from another
+    // provider; user-typed ElevenLabs/Cartesia IDs are preserved otherwise.
+    const knownVoiceFromAny = (OPENAI_VOICES as readonly string[]).includes(ttsVoice);
+    const isCurrentProviderDefault = ttsVoice === TTS_DEFAULT_VOICE.elevenlabs ||
+                                     ttsVoice === TTS_DEFAULT_VOICE.cartesia;
+    if (knownVoiceFromAny || isCurrentProviderDefault || ttsVoice === "") {
+      setTtsVoice(TTS_DEFAULT_VOICE[p]);
     }
   }
 
@@ -127,13 +161,14 @@ export function SettingsTab({ config }: Props) {
           <input
             type="text"
             value={defaultFolder}
-            placeholder="/Users/you/dev/myproject (leave empty for explicit pick)"
+            placeholder="~/dev/myproject (leave empty for explicit pick)"
             onChange={(e) => setDefaultFolder(e.target.value)}
             style={inputStyle}
           />
           <p style={hintStyle}>
             Server checks for a Pi running in this folder on UI start.
             If missing and Spawn-if-missing is on, it spawns one in tmux.
+            Tildes are expanded.
           </p>
         </Field>
 
@@ -179,40 +214,39 @@ export function SettingsTab({ config }: Props) {
         <Field label="Provider">
           <select
             value={sttProvider}
-            onChange={(e) => onProviderChange(e.target.value as "openai-whisper" | "deepgram")}
+            onChange={(e) => onSttProviderChange(e.target.value as "openai-whisper" | "deepgram")}
             style={inputStyle}
           >
             <option value="openai-whisper">OpenAI Whisper (uses OPENAI_API_KEY)</option>
             <option value="deepgram">Deepgram (uses DEEPGRAM_API_KEY)</option>
           </select>
-          <p style={hintStyle}>
-            Takes effect on the next voice connection. Make sure the matching env var is
-            set when you launched the server.
-          </p>
         </Field>
         <Field label="Model">
-          <input
-            type="text"
+          <select
             value={sttModel}
             onChange={(e) => setSttModel(e.target.value)}
-            placeholder={sttProvider === "deepgram" ? "nova-3" : "whisper-1"}
             style={inputStyle}
-          />
-          <p style={hintStyle}>
-            {sttProvider === "deepgram"
-              ? 'Try "nova-3" (best) or "nova-2-general".'
-              : 'Use "whisper-1" — OpenAI only exposes one Whisper model in the API.'}
-          </p>
+          >
+            {STT_MODELS[sttProvider].map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
         </Field>
         <Field label="Language">
-          <input
-            type="text"
+          <select
             value={sttLanguage}
             onChange={(e) => setSttLanguage(e.target.value)}
-            placeholder="en"
             style={inputStyle}
-          />
-          <p style={hintStyle}>ISO 639-1 code, e.g. en, de, fr.</p>
+          >
+            {STT_LANGUAGES.map((l) => (
+              <option key={l} value={l}>
+                {l}
+              </option>
+            ))}
+          </select>
+          <p style={hintStyle}>ISO 639-1 code, or "multi" for auto-detect on Deepgram.</p>
         </Field>
       </Section>
 
@@ -228,40 +262,50 @@ export function SettingsTab({ config }: Props) {
             <option value="cartesia">Cartesia (uses CARTESIA_API_KEY)</option>
           </select>
           <p style={hintStyle}>
-            Note: Deepgram is not a TTS provider — it only does STT. Make sure the matching env
-            var is set. Takes effect on the next voice connection.
+            Note: Deepgram is not a TTS provider — it only does STT.
           </p>
         </Field>
         <Field label="Model">
-          <input
-            type="text"
+          <select
             value={ttsModel}
             onChange={(e) => setTtsModel(e.target.value)}
-            placeholder={ttsDefaultModel(ttsProvider)}
             style={inputStyle}
-          />
-          <p style={hintStyle}>
-            {ttsProvider === "elevenlabs"
-              ? 'Try "eleven_flash_v2_5" (low-latency) or "eleven_multilingual_v2".'
-              : ttsProvider === "openai"
-              ? 'Try "gpt-4o-mini-tts" (recommended) or "tts-1".'
-              : 'Try "sonic-3" (newest) or "sonic-2".'}
-          </p>
+          >
+            {TTS_MODELS[ttsProvider].map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
         </Field>
-        <Field label="Voice ID">
-          <input
-            type="text"
-            value={ttsVoice}
-            onChange={(e) => setTtsVoice(e.target.value)}
-            placeholder={ttsDefaultVoice(ttsProvider)}
-            style={inputStyle}
-          />
+        <Field label="Voice">
+          {ttsProvider === "openai" ? (
+            <select
+              value={ttsVoice}
+              onChange={(e) => setTtsVoice(e.target.value)}
+              style={inputStyle}
+            >
+              {OPENAI_VOICES.map((v) => (
+                <option key={v} value={v}>
+                  {v}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              type="text"
+              value={ttsVoice}
+              onChange={(e) => setTtsVoice(e.target.value)}
+              placeholder={TTS_DEFAULT_VOICE[ttsProvider]}
+              style={inputStyle}
+            />
+          )}
           <p style={hintStyle}>
             {ttsProvider === "elevenlabs"
-              ? "ElevenLabs voice ID (20-char alphanumeric)."
+              ? "ElevenLabs voice ID (20-char alphanumeric). Browse voices at elevenlabs.io/app/voice-library."
               : ttsProvider === "openai"
-              ? 'One of: alloy, echo, fable, onyx, nova, shimmer.'
-              : "Cartesia voice ID (UUID), or leave empty for the plugin's default."}
+              ? "OpenAI voice — picked from a fixed catalogue."
+              : "Cartesia voice ID (UUID). Browse at play.cartesia.ai/voices."}
           </p>
         </Field>
       </Section>
@@ -277,9 +321,8 @@ export function SettingsTab({ config }: Props) {
             <option value="manual">Manual (push-to-talk: tap a button to start/stop)</option>
           </select>
           <p style={hintStyle}>
-            Manual mode mutes the mic until you press the "Tap to talk" button in the top
-            bar; tap again to stop. Useful in noisy environments where VAD false-triggers.
-            Takes effect on the next voice connection.
+            You can also flip this on the fly via the <code>VAD</code>/<code>PTT</code> badge in the top bar.
+            Switching mid-session adjusts your mic immediately; STT/TTS provider changes need a reconnect.
           </p>
         </Field>
       </Section>
@@ -308,7 +351,7 @@ export function SettingsTab({ config }: Props) {
             </label>
             <label
               style={{ display: "flex", alignItems: "center", gap: 6 }}
-              title="Off by default: 'copy' uses session.say() during the LLM stream, which blocks pipelineReply's progressive TTS playback. Re-enable only if you understand the tradeoff."
+              title="Off by default: 'copy' uses session.say() during the LLM stream, which blocks pipelineReply's progressive TTS playback."
             >
               <input
                 type="checkbox"
@@ -340,16 +383,35 @@ export function SettingsTab({ config }: Props) {
             onChange={(e) => setEarconVolume(Number(e.target.value))}
             style={{ width: "100%" }}
           />
-          <p style={hintStyle}>
-            Earcons take effect on the next voice connection (worker reads this from the dispatch metadata).
-          </p>
         </Field>
       </Section>
 
-      <div style={{ display: "flex", gap: 8, marginTop: 14, alignItems: "center" }}>
+      {voiceConnected && voiceSettingsDirty && (
+        <div
+          style={{
+            padding: "8px 12px",
+            background: "#332a18",
+            border: "1px solid #8a6a18",
+            borderRadius: 4,
+            fontSize: 12,
+            color: "#fa5",
+            marginBottom: 12,
+          }}
+        >
+          You're connected to a voice session. STT/TTS/turn-mode changes only take effect on the
+          next dispatch — click <strong>Save &amp; reconnect</strong> to apply now.
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 8, marginTop: 14, alignItems: "center", flexWrap: "wrap" }}>
         <button onClick={save} style={btnPrimary}>
           Save
         </button>
+        {voiceConnected && voiceSettingsDirty && (
+          <button onClick={saveAndReconnect} disabled={reconnecting} style={btnAccent}>
+            {reconnecting ? "Reconnecting…" : "Save & reconnect"}
+          </button>
+        )}
         {savedAt && (
           <span style={{ fontSize: 11, color: "#7a7" }}>
             saved {new Date(savedAt).toLocaleTimeString()}
@@ -427,4 +489,9 @@ const btnPrimary: React.CSSProperties = {
   borderRadius: 4,
   cursor: "pointer",
   fontSize: 13,
+};
+
+const btnAccent: React.CSSProperties = {
+  ...btnPrimary,
+  background: "#a36",
 };
