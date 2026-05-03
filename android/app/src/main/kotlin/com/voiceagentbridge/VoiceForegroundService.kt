@@ -30,7 +30,6 @@ class VoiceForegroundService : Service() {
 
     private var wakeLock: PowerManager.WakeLock? = null
     private var audioFocusRequest: AudioFocusRequest? = null
-    private var previousAudioMode: Int = AudioManager.MODE_NORMAL
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -83,50 +82,25 @@ class VoiceForegroundService : Service() {
     }
 
     /**
-     * Claim a "phone-call-style" audio session so Android keeps the WebView
-     * audio playing through screen-off.
+     * Claim AudioFocus with USAGE_MEDIA so Android knows our app holds the
+     * audio channel. We do NOT change AudioManager.mode — Chromium's
+     * WebView routes its audio to STREAM_MUSIC regardless of mode, and
+     * setting MODE_IN_COMMUNICATION silences STREAM_MUSIC, which means the
+     * agent's TTS becomes inaudible (verified live: dumpsys audio showed
+     * our service in MODE_IN_COMMUNICATION while the WebView's audio focus
+     * stayed at USAGE_MEDIA → STREAM_MUSIC, producing total silence).
      *
-     * Why this and not USAGE_MEDIA: dumpsys audio shows that Chromium's
-     * WebView requests its own AudioFocus on top of ours as
-     * GAIN_TRANSIENT_MAY_DUCK — a weak type that the system aggressively
-     * releases on visibility change. With our app in MODE_IN_COMMUNICATION
-     * and a USAGE_VOICE_COMMUNICATION focus claim, Android treats the
-     * whole app as an ongoing voice call (same pattern WhatsApp / Zoom /
-     * Discord / Signal use), which suppresses the pause-on-screen-off
-     * behaviour at a layer the WebView's policy can't override.
-     *
-     * Tradeoff: the volume rocker now controls the VOICE_CALL stream, not
-     * MEDIA. We compensate in MainActivity by setting volumeControlStream
-     * to STREAM_VOICE_CALL too. Speakerphone is forced on so output goes
-     * to the loudspeaker by default (matching media-style UX), not the
-     * earpiece (which is the MODE_IN_COMMUNICATION default).
+     * This still holds an AudioFocus GAIN claim above the WebView's
+     * Chromium-internal TRANSIENT_MAY_DUCK claim, which is the most we can
+     * do from a WebView-based wrapper. Robust screen-off behaviour
+     * ultimately needs the native LiveKit Android SDK so we can produce
+     * the audio ourselves and avoid Chromium's policy entirely.
      */
     private fun requestAudioFocus() {
         val audioManager = getSystemService(AUDIO_SERVICE) as? AudioManager ?: return
 
-        // Take the app into VoIP/phone-call audio mode. The OS treats apps
-        // in this mode as ongoing communication and doesn't pause them on
-        // screen-off the way it does media-mode apps with weak focus.
-        previousAudioMode = audioManager.mode
-        try {
-            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-        } catch (e: SecurityException) {
-            Log.w(TAG, "setMode(IN_COMMUNICATION) denied: ${e.message}")
-        }
-
-        // Default communication-mode routing is the earpiece. Force the
-        // loudspeaker so the user can leave the phone in their pocket and
-        // still hear the agent (and Bluetooth audio still wins if a BT
-        // headset is connected — that's handled by the OS, not us).
-        try {
-            @Suppress("DEPRECATION")
-            audioManager.isSpeakerphoneOn = true
-        } catch (_: Throwable) {
-            // ignore — some OEMs restrict this from non-system apps
-        }
-
         val attrs = AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+            .setUsage(AudioAttributes.USAGE_MEDIA)
             .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
             .build()
         val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
@@ -141,7 +115,7 @@ class VoiceForegroundService : Service() {
         val result = audioManager.requestAudioFocus(request)
         Log.i(
             TAG,
-            "requestAudioFocus(VOICE_COMMUNICATION) result=$result (1=granted, 0=failed, 2=delayed)",
+            "requestAudioFocus(MEDIA) result=$result (1=granted, 0=failed, 2=delayed)",
         )
     }
 
@@ -149,18 +123,6 @@ class VoiceForegroundService : Service() {
         val audioManager = getSystemService(AUDIO_SERVICE) as? AudioManager ?: return
         audioFocusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
         audioFocusRequest = null
-        // Restore whatever audio mode the system had before we claimed it.
-        try {
-            audioManager.mode = previousAudioMode
-        } catch (_: Throwable) {
-            // ignore
-        }
-        try {
-            @Suppress("DEPRECATION")
-            audioManager.isSpeakerphoneOn = false
-        } catch (_: Throwable) {
-            // ignore
-        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
