@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
+import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -42,6 +43,10 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+
+        // Volume rocker should control media volume (the stream the
+        // foreground service claims focus on), not the ringer.
+        volumeControlStream = AudioManager.STREAM_MUSIC
 
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
         webView = findViewById(R.id.webview)

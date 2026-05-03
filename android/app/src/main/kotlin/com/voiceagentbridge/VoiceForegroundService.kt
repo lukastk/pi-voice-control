@@ -7,9 +7,13 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.util.Log
 import androidx.core.app.NotificationCompat
 
 /**
@@ -25,6 +29,7 @@ import androidx.core.app.NotificationCompat
 class VoiceForegroundService : Service() {
 
     private var wakeLock: PowerManager.WakeLock? = null
+    private var audioFocusRequest: AudioFocusRequest? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -72,12 +77,63 @@ class VoiceForegroundService : Service() {
             PowerManager.PARTIAL_WAKE_LOCK,
             "VoiceAgentBridge:VoiceLock",
         ).apply { acquire(/* no timeout */) }
+
+        requestAudioFocus()
+    }
+
+    /**
+     * Claim AudioFocus so the OS treats the WebView's audio output as
+     * ongoing voice/media playback and doesn't pause it when the screen
+     * turns off. Without this, even with the foreground service +
+     * battery-optimisation exemption, Android Chromium's WebView pauses
+     * audio elements / Web Audio output on visibility change because the
+     * app is not "actively claiming" media playback.
+     *
+     * USAGE_MEDIA + CONTENT_TYPE_SPEECH matches the ChatGPT-style voice
+     * agent profile: audio routes through the standard media volume
+     * (not the lower call/voice volume) and Bluetooth headsets work.
+     * USAGE_VOICE_COMMUNICATION would force MODE_IN_COMMUNICATION audio
+     * routing which is wrong for one-way agent playback.
+     *
+     * AUDIOFOCUS_GAIN (not _TRANSIENT) because the agent owns the audio
+     * channel for the duration of the session — no other apps should
+     * play over us. willPauseWhenDucked=false because if e.g. a phone
+     * call comes in, we still want to keep our state; the call mode
+     * change will be handled by the OS at a different layer.
+     */
+    private fun requestAudioFocus() {
+        val audioManager = getSystemService(AUDIO_SERVICE) as? AudioManager ?: return
+        val attrs = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_MEDIA)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+            .build()
+        val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+            .setAudioAttributes(attrs)
+            .setAcceptsDelayedFocusGain(false)
+            .setWillPauseWhenDucked(false)
+            .setOnAudioFocusChangeListener { focusChange ->
+                Log.i(TAG, "AudioFocus change: $focusChange (we keep going either way)")
+            }
+            .build()
+        audioFocusRequest = request
+        val result = audioManager.requestAudioFocus(request)
+        Log.i(
+            TAG,
+            "requestAudioFocus result=$result (1=granted, 0=failed, 2=delayed)",
+        )
+    }
+
+    private fun releaseAudioFocus() {
+        val audioManager = getSystemService(AUDIO_SERVICE) as? AudioManager ?: return
+        audioFocusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
+        audioFocusRequest = null
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
 
     override fun onDestroy() {
         super.onDestroy()
+        releaseAudioFocus()
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
     }
@@ -103,6 +159,7 @@ class VoiceForegroundService : Service() {
     }
 
     companion object {
+        private const val TAG = "VoiceFgService"
         private const val CHANNEL_ID = "voice_agent_bridge"
         private const val NOTIFICATION_ID = 1
     }
