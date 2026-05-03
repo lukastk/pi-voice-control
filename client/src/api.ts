@@ -122,6 +122,17 @@ export const api = {
     ),
   clearPromptOnTarget: () =>
     jsonFetch<{ ok: boolean; error?: string }>("/api/prompt/clear", { method: "POST" }),
+
+  elevenLabsVoices: () =>
+    jsonFetch<{ ok: boolean; voices: ElevenLabsVoice[]; error?: string }>(
+      "/api/voices/elevenlabs",
+    ),
+};
+
+export type ElevenLabsVoice = {
+  voice_id: string;
+  name: string;
+  category?: string;
 };
 
 export type PromptSnapshot = {

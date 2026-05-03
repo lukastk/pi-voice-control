@@ -7,10 +7,12 @@
  */
 import { useCallback, useRef, useState } from "react";
 import { api } from "./api.ts";
-import { connectVoice, setMicMuted, type VoiceHandle } from "./livekit.ts";
+import { connectVoice, setMicMuted, type DataMessage, type VoiceHandle } from "./livekit.ts";
 
 // re-export for convenience in App when wiring connect()
 export type { VoiceHandle };
+
+export type Toast = { id: number; kind: "error" | "info"; source?: string; message: string };
 
 export type VoiceState =
   | { kind: "idle" }
@@ -27,10 +29,25 @@ export function useVoice() {
   const [state, setState] = useState<VoiceState>({ kind: "idle" });
   const [log, setLog] = useState<string[]>([]);
   const [micMuted, setMicMutedState] = useState<boolean>(false);
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const toastIdRef = useRef(0);
   const handleRef = useRef<VoiceHandle | null>(null);
 
   const append = useCallback((line: string) => {
     setLog((prev) => [...prev.slice(-99), `${new Date().toLocaleTimeString()}  ${line}`]);
+  }, []);
+
+  const pushToast = useCallback((msg: DataMessage) => {
+    const id = ++toastIdRef.current;
+    setToasts((prev) => [...prev, { id, kind: msg.kind, source: msg.source, message: msg.message }]);
+    // auto-dismiss after 8s — error toasts are sticky enough for the user to read
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 8000);
+  }, []);
+
+  const dismissToast = useCallback((id: number) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
   const connect = useCallback(
@@ -46,7 +63,10 @@ export function useVoice() {
         }
         const dispatch = await api.selectSession(socketPath);
         append(`room=${dispatch.roomName}`);
-        const handle = await connectVoice(dispatch, append, { startMicEnabled });
+        const handle = await connectVoice(dispatch, append, {
+          startMicEnabled,
+          onMessage: pushToast,
+        });
         handleRef.current = handle;
         setState({ kind: "connected", socketPath });
       } catch (err: any) {
@@ -88,5 +108,15 @@ export function useVoice() {
     [append, micMuted],
   );
 
-  return { state, log, connect, disconnect, micMuted, toggleMic, setMicMutedExplicit };
+  return {
+    state,
+    log,
+    connect,
+    disconnect,
+    micMuted,
+    toggleMic,
+    setMicMutedExplicit,
+    toasts,
+    dismissToast,
+  };
 }

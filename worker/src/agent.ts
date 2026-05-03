@@ -338,6 +338,32 @@ export default defineAgent({
       if (isFinal && shouldPlay("over")) playEarcon(session, "over");
     });
 
+    // Surface STT/TTS/LLM errors from the AgentSession back to the browser
+    // via the LiveKit data channel. The client subscribes to DataReceived
+    // and renders a toast — important because TTS errors are otherwise
+    // silent (no spoken output, no obvious feedback in the UI).
+    session.on(voice.AgentSessionEventTypes.Error, (ev) => {
+      const err = (ev as any).error;
+      const source = (ev as any).source;
+      const sourceLabel: string =
+        source?.label ?? source?.provider ?? source?.constructor?.name ?? "unknown";
+      const message: string =
+        err?.error?.message ?? err?.message ?? err?.reason ?? String(err ?? "unknown error");
+      // Skip the well-known LiveKit Cloud adaptive-interruption 401 — it's
+      // expected when the user hasn't enabled that feature, and we already
+      // fall back to local VAD-based interruption.
+      if (sourceLabel.includes("AdaptiveInterruption")) return;
+      logger.warn({ source: sourceLabel, message }, "[worker] surfacing error to client");
+      try {
+        const payload = new TextEncoder().encode(
+          JSON.stringify({ kind: "error", source: sourceLabel, message }),
+        );
+        ctx.room.localParticipant?.publishData(payload, { reliable: true, topic: "voice-bridge" });
+      } catch (e: any) {
+        logger.error({ err: e }, "[worker] publishData failed");
+      }
+    });
+
     await session.start({ agent, room: ctx.room });
     logger.info("[worker] voice session started");
     // No spoken greeting — play a short ascending tone instead so the user

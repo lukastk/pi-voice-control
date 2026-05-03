@@ -9,6 +9,12 @@ import type { DispatchResult } from "./api.ts";
 
 export type VoiceState = "idle" | "connecting" | "connected" | "error";
 
+export type DataMessage = {
+  kind: "error" | "info";
+  source?: string;
+  message: string;
+};
+
 export type VoiceHandle = {
   room: Room;
   audioElement: HTMLAudioElement;
@@ -18,7 +24,7 @@ export type VoiceHandle = {
 export async function connectVoice(
   d: DispatchResult,
   log: (msg: string) => void,
-  opts: { startMicEnabled: boolean },
+  opts: { startMicEnabled: boolean; onMessage?: (msg: DataMessage) => void },
 ): Promise<VoiceHandle> {
   const room = new Room({
     audioCaptureDefaults: {
@@ -44,6 +50,16 @@ export async function connectVoice(
     })
     .on(RoomEvent.TrackUnsubscribed, (track) => {
       track.detach().forEach((el) => el.remove());
+    })
+    .on(RoomEvent.DataReceived, (payload) => {
+      try {
+        const msg = JSON.parse(new TextDecoder().decode(payload)) as DataMessage;
+        if (msg && (msg.kind === "error" || msg.kind === "info") && typeof msg.message === "string") {
+          opts.onMessage?.(msg);
+        }
+      } catch {
+        // ignore non-JSON payloads
+      }
     });
 
   await room.connect(d.livekitUrl, d.token);

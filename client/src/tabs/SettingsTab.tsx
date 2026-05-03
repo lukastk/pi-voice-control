@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, type Config } from "../api.ts";
+import { api, type Config, type ElevenLabsVoice } from "../api.ts";
 import {
   STT_MODELS,
   STT_LANGUAGES,
@@ -39,6 +39,32 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reconnecting, setReconnecting] = useState(false);
+
+  const [elVoices, setElVoices] = useState<ElevenLabsVoice[] | null>(null);
+  const [elVoicesError, setElVoicesError] = useState<string | null>(null);
+  const [elVoicesLoading, setElVoicesLoading] = useState(false);
+
+  // Lazy-load ElevenLabs voices when the user lands on the tab AND has
+  // ElevenLabs picked. Re-fetch on demand via the refresh button below.
+  useEffect(() => {
+    if (ttsProvider !== "elevenlabs") return;
+    if (elVoices !== null || elVoicesLoading) return;
+    setElVoicesLoading(true);
+    setElVoicesError(null);
+    api
+      .elevenLabsVoices()
+      .then((res) => {
+        if (res.ok) setElVoices(res.voices);
+        else setElVoicesError(res.error ?? "fetch failed");
+      })
+      .catch((err) => setElVoicesError(err.message))
+      .finally(() => setElVoicesLoading(false));
+  }, [ttsProvider, elVoices, elVoicesLoading]);
+
+  function refreshElVoices() {
+    setElVoices(null);
+    setElVoicesError(null);
+  }
 
   useEffect(() => {
     if (!config) return;
@@ -291,6 +317,15 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
                 </option>
               ))}
             </select>
+          ) : ttsProvider === "elevenlabs" ? (
+            <ElevenLabsVoicePicker
+              value={ttsVoice}
+              onChange={setTtsVoice}
+              voices={elVoices}
+              loading={elVoicesLoading}
+              error={elVoicesError}
+              onRefresh={refreshElVoices}
+            />
           ) : (
             <input
               type="text"
@@ -302,7 +337,7 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
           )}
           <p style={hintStyle}>
             {ttsProvider === "elevenlabs"
-              ? "ElevenLabs voice ID (20-char alphanumeric). Browse voices at elevenlabs.io/app/voice-library."
+              ? 'Voices in your ElevenLabs account (My Voices). Public Library voices must be "Added to my voices" on elevenlabs.io before they\'ll work.'
               : ttsProvider === "openai"
               ? "OpenAI voice — picked from a fixed catalogue."
               : "Cartesia voice ID (UUID). Browse at play.cartesia.ai/voices."}
@@ -440,6 +475,125 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
     </div>
   );
 }
+
+function ElevenLabsVoicePicker({
+  value,
+  onChange,
+  voices,
+  loading,
+  error,
+  onRefresh,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  voices: ElevenLabsVoice[] | null;
+  loading: boolean;
+  error: string | null;
+  onRefresh: () => void;
+}) {
+  if (loading) {
+    return (
+      <div style={{ ...inputStyle, color: "#888", display: "flex", alignItems: "center" }}>
+        Loading your voices…
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div>
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          style={inputStyle}
+        />
+        <div style={{ fontSize: 11, color: "#fa5", marginTop: 4 }}>
+          Couldn't fetch your ElevenLabs voices: {error}. Falling back to manual entry.{" "}
+          <button onClick={onRefresh} style={linkBtn}>retry</button>
+        </div>
+      </div>
+    );
+  }
+  if (!voices || voices.length === 0) {
+    return (
+      <div>
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          style={inputStyle}
+        />
+        <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>
+          No voices found in your ElevenLabs account. Add some at{" "}
+          <a href="https://elevenlabs.io/app/voice-library" target="_blank" rel="noreferrer">
+            voice library
+          </a>
+          .
+        </div>
+      </div>
+    );
+  }
+  // Group: cloned/professional first, then library/premade. Within each
+  // group, alphabetical.
+  const sorted = [...voices].sort((a, b) => {
+    const aw = priority(a.category);
+    const bw = priority(b.category);
+    if (aw !== bw) return aw - bw;
+    return a.name.localeCompare(b.name);
+  });
+  const valueIsKnown = sorted.some((v) => v.voice_id === value);
+  return (
+    <div>
+      <select
+        value={valueIsKnown ? value : "__custom__"}
+        onChange={(e) => {
+          if (e.target.value !== "__custom__") onChange(e.target.value);
+        }}
+        style={inputStyle}
+      >
+        {!valueIsKnown && (
+          <option value="__custom__">{value || "(custom — type below)"}</option>
+        )}
+        {sorted.map((v) => (
+          <option key={v.voice_id} value={v.voice_id}>
+            {v.name}
+            {v.category ? ` · ${v.category}` : ""}
+          </option>
+        ))}
+      </select>
+      <div style={{ display: "flex", gap: 8, marginTop: 4, alignItems: "center" }}>
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="or paste a voice ID"
+          style={{ ...inputStyle, fontSize: 11, padding: "4px 8px", width: "auto", flex: 1 }}
+        />
+        <button onClick={onRefresh} style={linkBtn} title="Refetch from ElevenLabs">
+          refresh
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function priority(category?: string): number {
+  if (category === "cloned") return 0;
+  if (category === "professional") return 1;
+  if (category === "generated") return 2;
+  if (category === "premade") return 3;
+  return 4;
+}
+
+const linkBtn: React.CSSProperties = {
+  background: "transparent",
+  color: "#5a8af0",
+  border: "none",
+  cursor: "pointer",
+  fontSize: 11,
+  textDecoration: "underline",
+  padding: 0,
+};
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (

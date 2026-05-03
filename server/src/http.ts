@@ -20,6 +20,36 @@ import {
 } from "./prompt/inject.ts";
 import { expandTilde } from "./util/path.ts";
 
+type ElevenLabsVoice = { voice_id: string; name: string; category?: string };
+
+let elevenLabsVoiceCache: { fetchedAt: number; voices: ElevenLabsVoice[] } | null = null;
+
+async function fetchElevenLabsVoices(): Promise<ElevenLabsVoice[]> {
+  const apiKey = process.env.ELEVENLABS_API_KEY ?? process.env.ELEVEN_API_KEY;
+  if (!apiKey) throw new Error("ELEVENLABS_API_KEY / ELEVEN_API_KEY not set");
+  // 5 minute cache — voices don't change often, and the dropdown re-renders
+  // every Settings tab visit.
+  if (elevenLabsVoiceCache && Date.now() - elevenLabsVoiceCache.fetchedAt < 5 * 60_000) {
+    return elevenLabsVoiceCache.voices;
+  }
+  const res = await fetch("https://api.elevenlabs.io/v1/voices", {
+    headers: { "xi-api-key": apiKey, accept: "application/json" },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`ElevenLabs ${res.status}: ${body.slice(0, 200)}`);
+  }
+  const data = (await res.json()) as { voices: ElevenLabsVoice[] };
+  const voices = (data.voices ?? []).map((v) => ({
+    voice_id: v.voice_id,
+    name: v.name,
+    category: v.category,
+  }));
+  elevenLabsVoiceCache = { fetchedAt: Date.now(), voices };
+  return voices;
+}
+
 const WTERM_PORT = Number(process.env.WTERM_PORT ?? 7891);
 
 export function mountApi(app: Hono) {
@@ -197,6 +227,15 @@ export function mountApi(app: Hono) {
     const next = updateConfig(body);
     publish({ type: "config:updated", data: next });
     return c.json(next);
+  });
+
+  app.get("/api/voices/elevenlabs", async (c) => {
+    try {
+      const voices = await fetchElevenLabsVoices();
+      return c.json({ ok: true, voices });
+    } catch (err: any) {
+      return c.json({ ok: false, error: err.message }, 502);
+    }
   });
 
   app.get("/api/prompt", (c) => {

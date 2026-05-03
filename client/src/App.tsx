@@ -4,9 +4,34 @@ import { SessionsTab } from "./tabs/SessionsTab.tsx";
 import { PromptTab } from "./tabs/PromptTab.tsx";
 import { SettingsTab } from "./tabs/SettingsTab.tsx";
 import { useServerState } from "./state.ts";
-import { useVoice } from "./voice.ts";
+import { useVoice, type Toast } from "./voice.ts";
 import { api } from "./api.ts";
 import { basename } from "./util.ts";
+
+function ToastStack({
+  toasts,
+  onDismiss,
+}: {
+  toasts: Toast[];
+  onDismiss: (id: number) => void;
+}) {
+  if (toasts.length === 0) return null;
+  return (
+    <div className="toast-stack">
+      {toasts.map((t) => (
+        <div key={t.id} className={`toast toast-${t.kind}`}>
+          <div className="toast-body">
+            {t.source && <div className="toast-source">{t.source}</div>}
+            <div>{t.message}</div>
+          </div>
+          <button className="toast-close" onClick={() => onDismiss(t.id)} aria-label="dismiss">
+            ×
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 type TabId = "terminal" | "sessions" | "prompt" | "settings";
 
@@ -137,6 +162,7 @@ export function App() {
           ●
         </span>
       </nav>
+      <ToastStack toasts={voice.toasts} onDismiss={voice.dismissToast} />
       <main className="content">
         <div style={{ display: tab === "terminal" ? "block" : "none", height: "100%" }}>
           <TerminalTab termPort={server.termPort} termPinned={server.termPinned} />
