@@ -87,6 +87,14 @@ export async function connectVoice(
   // ws://<host>:7880 resolves to the same machine the HTTP server is on.
   const livekitUrl = rewriteLocalhost(d.livekitUrl);
   await room.connect(livekitUrl, d.token);
+
+  // Tell Android we're playing legitimate ongoing media so it doesn't
+  // throttle the HTMLAudioElement when the screen turns off. Without this,
+  // Chromium-based WebViews pause longer audio playback on visibility
+  // change — earcons (80 ms) slip through before the throttle, longer TTS
+  // gets cut off mid-stream. Same mechanism Spotify/YouTube use.
+  enableBackgroundMediaPlayback(audioElement);
+
   // Always pre-warm the mic device so the browser permission prompt fires
   // here, not on the first manual-mode tap. We immediately mute if the user
   // is in manual mode — setMicrophoneEnabled(true) is needed to publish a
@@ -102,10 +110,84 @@ export async function connectVoice(
   const disconnect = async () => {
     await room.disconnect();
     audioElement.remove();
+    document.querySelectorAll('audio[data-role="voice-bridge-keepalive"]').forEach((el) => el.remove());
+    if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+      try {
+        navigator.mediaSession.playbackState = "none";
+        navigator.mediaSession.metadata = null;
+      } catch {
+        // ignore
+      }
+    }
   };
 
   return { room, audioElement, disconnect };
 }
+
+/**
+ * Mark the page as actively playing media so Android Chromium / WebView
+ * doesn't pause the agent's audio track when the screen turns off.
+ *
+ * Three layers because no single one is bulletproof on every Android
+ * surface (system WebView, Chrome PWA, Samsung Internet, etc.):
+ *
+ *   1. MediaSession API — declares ongoing media metadata; Android shows it
+ *      in lockscreen controls and treats it as background-eligible.
+ *   2. Loop a 1-frame-of-silence audio file so an HTMLAudioElement is
+ *      always "actively playing" from the browser's policy perspective.
+ *      Earcons-only worked previously because they kept hitting the
+ *      element; longer TTS got cut once the browser re-evaluated state.
+ *   3. AudioContext.resume() on the silence track — some Chromium versions
+ *      gate audio playback on AudioContext state regardless of the element.
+ */
+function enableBackgroundMediaPlayback(audioElement: HTMLAudioElement) {
+  if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: "Voice Bridge",
+        artist: "Pi",
+      });
+      navigator.mediaSession.playbackState = "playing";
+      // Empty action handlers — declaring them is enough to claim the
+      // session; we don't do anything special on play/pause/seek.
+      const noop = () => {};
+      try { navigator.mediaSession.setActionHandler("play", noop); } catch {}
+      try { navigator.mediaSession.setActionHandler("pause", noop); } catch {}
+    } catch {
+      // best-effort
+    }
+  }
+
+  // Silent keep-alive: a 1-second silent WAV looped indefinitely on a
+  // dedicated audio element. The agent's track is attached to a different
+  // element; this one only exists so the page reliably has an actively
+  // playing media element across visibility changes.
+  try {
+    const keepalive = document.createElement("audio");
+    keepalive.src = SILENT_WAV_DATA_URL;
+    keepalive.loop = true;
+    keepalive.autoplay = true;
+    keepalive.style.display = "none";
+    keepalive.dataset.role = "voice-bridge-keepalive";
+    document.body.appendChild(keepalive);
+    keepalive.play().catch(() => {
+      // autoplay can fail without a user gesture; the page already had a
+      // gesture (Connect voice click) so this should normally succeed.
+    });
+    // Tag the agent audio element too so disconnect can clean both up.
+    audioElement.dataset.role = "voice-bridge-agent";
+  } catch {
+    // best-effort
+  }
+}
+
+/**
+ * 1 second of silence as a base64 WAV (mono, 8 kHz, s8). Used as the
+ * loop source for the keep-alive audio element. Tiny — under 1 KB.
+ */
+const SILENT_WAV_DATA_URL =
+  "data:audio/wav;base64,UklGRkQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YR" +
+  "AAAACAgICAgICAgICAgICAgIA=";
 
 /**
  * If the URL points at localhost / 127.0.0.1 / ::1, swap the hostname for
