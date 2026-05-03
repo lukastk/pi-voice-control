@@ -34,13 +34,13 @@
     "worker": {
       "name": "@voice-agent-bridge/worker",
       "dependencies": {
-        "@livekit/agents": "^1.2.7",
-        "@livekit/agents-plugin-cartesia": "^1.2.7",
-        "@livekit/agents-plugin-deepgram": "^1.2.7",
-        "@livekit/agents-plugin-elevenlabs": "^1.2.7",
-        "@livekit/agents-plugin-openai": "^1.2.7",
-        "@livekit/agents-plugin-silero": "^1.2.7",
-        "@livekit/rtc-node": "^0.13.20",
+        "@livekit/agents": "^1.3.2",
+        "@livekit/agents-plugin-cartesia": "^1.3.2",
+        "@livekit/agents-plugin-deepgram": "^1.3.2",
+        "@livekit/agents-plugin-elevenlabs": "^1.3.2",
+        "@livekit/agents-plugin-openai": "^1.3.2",
+        "@livekit/agents-plugin-silero": "^1.3.2",
+        "@livekit/rtc-node": "^0.13.27",
       },
       "devDependencies": {
         "@types/node": "^22.10.5",
@@ -236,17 +236,17 @@
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
 
-    "@livekit/agents": ["@livekit/agents@1.3.0", "", { "dependencies": { "@bufbuild/protobuf": "^1.10.0", "@ffmpeg-installer/ffmpeg": "^1.1.0", "@livekit/mutex": "^1.1.1", "@livekit/protocol": "^1.45.3", "@livekit/throws-transformer": "0.1.8", "@livekit/typed-emitter": "^3.0.0", "@opentelemetry/api": "^1.9.0", "@opentelemetry/api-logs": "^0.54.0", "@opentelemetry/core": "^2.2.0", "@opentelemetry/exporter-logs-otlp-proto": "^0.54.0", "@opentelemetry/exporter-trace-otlp-proto": "^0.54.0", "@opentelemetry/instrumentation-pino": "^0.43.0", "@opentelemetry/otlp-exporter-base": "^0.208.0", "@opentelemetry/resources": "^1.28.0", "@opentelemetry/sdk-logs": "^0.54.0", "@opentelemetry/sdk-trace-base": "^1.28.0", "@opentelemetry/sdk-trace-node": "^1.28.0", "@opentelemetry/semantic-conventions": "^1.28.0", "@types/pidusage": "^2.0.5", "commander": "^12.0.0", "fluent-ffmpeg": "^2.1.3", "form-data": "^4.0.5", "heap-js": "^2.6.0", "json-schema": "^0.4.0", "livekit-server-sdk": "^2.14.1", "ofetch": "^1.5.1", "openai": "^6.8.1", "pidusage": "^4.0.1", "pino": "^8.19.0", "pino-pretty": "^11.0.0", "sharp": "0.34.5", "uuid": "^11.1.0", "ws": "^8.18.0", "zod-to-json-schema": "^3.24.6" }, "peerDependencies": { "@livekit/rtc-node": "^0.13.25", "zod": "^3.25.76 || ^4.1.8" } }, "sha512-Q5ViTDtC7Gwrk/6CB2PDe+giu/pFcoKrVR5n25yGtcfkJeVE71xOK8PGtHwYFCXO6DS+j3wbPV26IKMUBC6KGw=="],
+    "@livekit/agents": ["@livekit/agents@1.3.2", "", { "dependencies": { "@bufbuild/protobuf": "^1.10.0", "@ffmpeg-installer/ffmpeg": "^1.1.0", "@livekit/mutex": "^1.1.1", "@livekit/protocol": "^1.45.6", "@livekit/throws-transformer": "0.1.8", "@livekit/typed-emitter": "^3.0.0", "@opentelemetry/api": "^1.9.0", "@opentelemetry/api-logs": "^0.54.0", "@opentelemetry/core": "^2.2.0", "@opentelemetry/exporter-logs-otlp-proto": "^0.54.0", "@opentelemetry/exporter-trace-otlp-proto": "^0.54.0", "@opentelemetry/instrumentation-pino": "^0.43.0", "@opentelemetry/otlp-exporter-base": "^0.208.0", "@opentelemetry/resources": "^1.28.0", "@opentelemetry/sdk-logs": "^0.54.0", "@opentelemetry/sdk-trace-base": "^1.28.0", "@opentelemetry/sdk-trace-node": "^1.28.0", "@opentelemetry/semantic-conventions": "^1.28.0", "@types/pidusage": "^2.0.5", "commander": "^12.0.0", "fluent-ffmpeg": "^2.1.3", "form-data": "^4.0.5", "heap-js": "^2.6.0", "json-schema": "^0.4.0", "livekit-server-sdk": "^2.14.1", "ofetch": "^1.5.1", "openai": "^6.8.1", "pidusage": "^4.0.1", "pino": "^8.19.0", "pino-pretty": "^11.0.0", "sharp": "0.34.5", "uuid": "^14.0.0", "ws": "^8.18.0", "zod-to-json-schema": "^3.24.6" }, "peerDependencies": { "@livekit/rtc-node": "^0.13.27", "zod": "^3.25.76 || ^4.1.8" } }, "sha512-rRkqsa7NY9aBQjnC9BKy+a5ogInLRz4vQuSq8x85i86hrMfDoqORAIOCJWs86iHjV8tVMap6+3IA4RVKsdzTxQ=="],
 
-    "@livekit/agents-plugin-cartesia": ["@livekit/agents-plugin-cartesia@1.3.0", "", { "dependencies": { "ws": "^8.18.0" }, "peerDependencies": { "@livekit/agents": "1.3.0", "@livekit/rtc-node": "^0.13.25", "zod": "^3.25.76 || ^4.1.8" } }, "sha512-iB5y4lVw9vpZYCAq8O/QYejmG7vSlrDuEXaFJzGz2sWt5jTeO9f2af73tGguu7YBFSGecVxeXUccYuTpl1YXGA=="],
+    "@livekit/agents-plugin-cartesia": ["@livekit/agents-plugin-cartesia@1.3.2", "", { "dependencies": { "ws": "^8.18.0" }, "peerDependencies": { "@livekit/agents": "1.3.2", "@livekit/rtc-node": "^0.13.27", "zod": "^3.25.76 || ^4.1.8" } }, "sha512-Cfj4YW2JNr9lAaOlJilLd5kmKm4W6K1ciOoqUJN/GsEzcm18O5xeYX8BGZHkXzkVkma+I/RIAxgUm1A9xnyt5Q=="],
 
-    "@livekit/agents-plugin-deepgram": ["@livekit/agents-plugin-deepgram@1.3.0", "", { "dependencies": { "ws": "^8.18.0" }, "peerDependencies": { "@livekit/agents": "1.3.0", "@livekit/rtc-node": "^0.13.25" } }, "sha512-W97/8sQX41ZxsSagzONgh5ENVJJuj/dnpB9vXVCsHoa50+APzUnSvpg3a1sasbwmc1hXQoVIyCMT/cbGce9Y2w=="],
+    "@livekit/agents-plugin-deepgram": ["@livekit/agents-plugin-deepgram@1.3.2", "", { "dependencies": { "ws": "^8.18.0" }, "peerDependencies": { "@livekit/agents": "1.3.2", "@livekit/rtc-node": "^0.13.27" } }, "sha512-qD3r3W4+Lc9+exBMfvgIWK46jVgRGEz2jB0l4icdTlBkWZaCYtbOEFzGfsxKKvoMqeM3itdERWVjYPrQXZHjpg=="],
 
-    "@livekit/agents-plugin-elevenlabs": ["@livekit/agents-plugin-elevenlabs@1.3.0", "", { "dependencies": { "@livekit/mutex": "^1.1.1", "ws": "^8.18.0" }, "peerDependencies": { "@livekit/agents": "1.3.0", "@livekit/rtc-node": "^0.13.25" } }, "sha512-kW5fpYtBlBnjL31sA2mFF6ky6ME+beOSXE/AwCn6sX8ljSXGIImBZZyXLvKpX6GAcUTwGLUlbXEwKG755ttzDQ=="],
+    "@livekit/agents-plugin-elevenlabs": ["@livekit/agents-plugin-elevenlabs@1.3.2", "", { "dependencies": { "@livekit/mutex": "^1.1.1", "ws": "^8.18.0" }, "peerDependencies": { "@livekit/agents": "1.3.2", "@livekit/rtc-node": "^0.13.27" } }, "sha512-qV+sYhWdnu43hl1v86i/TDSb11xPDrwGuqf1PJzNF6EmoulKRRplt/m/9JKXCjooFbIWzKMjbPzm/Jf+p/luMQ=="],
 
-    "@livekit/agents-plugin-openai": ["@livekit/agents-plugin-openai@1.3.0", "", { "dependencies": { "@livekit/mutex": "^1.1.1", "openai": "^6.8.1", "ws": "^8.18.0" }, "peerDependencies": { "@livekit/agents": "1.3.0", "@livekit/rtc-node": "^0.13.25", "zod": "^3.25.76 || ^4.1.8" } }, "sha512-/x+7OnWHMDOUazQ+oKuzpS+NGytdsUVgeL8aAM41Ae0Y+1naBAlvlEmeOuB90AuMivnlpdK2vqTr4QYtAJlYvA=="],
+    "@livekit/agents-plugin-openai": ["@livekit/agents-plugin-openai@1.3.2", "", { "dependencies": { "@livekit/mutex": "^1.1.1", "openai": "^6.8.1", "ws": "^8.18.0" }, "peerDependencies": { "@livekit/agents": "1.3.2", "@livekit/rtc-node": "^0.13.27", "zod": "^3.25.76 || ^4.1.8" } }, "sha512-zE/DsnIyvsLZp6kUmGOPQ11o5nuGdQyhZRhsmxT+6Ty6JbydAy5Xv88hF3uwcNhlQr4w9XjAyAiXpTui5VRqHQ=="],
 
-    "@livekit/agents-plugin-silero": ["@livekit/agents-plugin-silero@1.3.0", "", { "dependencies": { "onnxruntime-node": "1.21.0", "ws": "^8.18.0" }, "peerDependencies": { "@livekit/agents": "1.3.0", "@livekit/rtc-node": "^0.13.25" } }, "sha512-YR1neu42eHcnDEUuvR+D5ZztH9E4SB4JXRISJsAe797szbCm9jVcyyqrgs8OqwN7FPPH/Qo2aF1AI11ZqpWaaQ=="],
+    "@livekit/agents-plugin-silero": ["@livekit/agents-plugin-silero@1.3.2", "", { "dependencies": { "onnxruntime-node": "1.21.0", "ws": "^8.18.0" }, "peerDependencies": { "@livekit/agents": "1.3.2", "@livekit/rtc-node": "^0.13.27" } }, "sha512-mRhOl0gxl8NRzFGHKly9/TCq0PcPDxjkhf5yKfF81yfDnAT0GVSazTekFk1l7MvrwsWYF2a/L+g2Q1U+4wahMw=="],
 
     "@livekit/mutex": ["@livekit/mutex@1.1.1", "", {}, "sha512-EsshAucklmpuUAfkABPxJNhzj9v2sG7JuzFDL4ML1oJQSV14sqrpTYnsaOudMAw9yOaW53NU3QQTlUQoRs4czw=="],
 
@@ -264,7 +264,7 @@
 
     "@livekit/rtc-ffi-bindings-win32-x64-msvc": ["@livekit/rtc-ffi-bindings-win32-x64-msvc@0.12.52-patch.0", "", { "os": "win32", "cpu": "x64" }, "sha512-a7eoTor7KgN4JDPqZjyBQjgkVIZcxkyP5Iau3O/1qDaYKboLMqSYHfSAk84Un4r0SsSFvxUXXDY3boMLJ7QYow=="],
 
-    "@livekit/rtc-node": ["@livekit/rtc-node@0.13.25", "", { "dependencies": { "@datastructures-js/deque": "1.0.8", "@livekit/mutex": "^1.0.0", "@livekit/rtc-ffi-bindings": "0.12.52-patch.0", "@livekit/typed-emitter": "^3.0.0", "pino": "^9.0.0", "pino-pretty": "^13.0.0" } }, "sha512-4tL58O2DdTDP+g1ajyP5mgEOzjymD/u06IxWWVKBee1goEwDSQlMqEog/DJW34FoNNqXp1yRMCsphI4V/T1ILg=="],
+    "@livekit/rtc-node": ["@livekit/rtc-node@0.13.27", "", { "dependencies": { "@datastructures-js/deque": "1.0.8", "@livekit/mutex": "^1.0.0", "@livekit/rtc-ffi-bindings": "0.12.52-patch.0", "@livekit/typed-emitter": "^3.0.0", "pino": "^9.0.0", "pino-pretty": "^13.0.0" } }, "sha512-IuP8lG57ceqJ7HyPS6GX7Moaj6jK/OZnm3/QM+NG8fpnoOUOsh4Q+aQ0kWYONgasW1SvUTtMStOkwhM6Au2i9w=="],
 
     "@livekit/throws-transformer": ["@livekit/throws-transformer@0.1.8", "", { "dependencies": { "glob": "^13.0.0" }, "peerDependencies": { "typescript": ">=4.7.0" }, "bin": { "throws-check": "dist/cli.js" } }, "sha512-AaSwQfIaG6YArKOCO+5/DgI8HfL19oHdrkyI0LJJVCqGeZXzPsZIO/Nm/SKUHbT1ERGhF5c34X8CcVWeOePpIQ=="],
 
@@ -750,7 +750,7 @@
 
     "update-browserslist-db": ["update-browserslist-db@1.2.3", "", { "dependencies": { "escalade": "^3.2.0", "picocolors": "^1.1.1" }, "peerDependencies": { "browserslist": ">= 4.21.0" }, "bin": { "update-browserslist-db": "cli.js" } }, "sha512-Js0m9cx+qOgDxo0eMiFGEueWztz+d4+M3rGlmKPT+T4IS/jP4ylw3Nwpu6cpTTP8R1MAC1kF4VbdLt3ARf209w=="],
 
-    "uuid": ["uuid@11.1.0", "", { "bin": { "uuid": "dist/esm/bin/uuid" } }, "sha512-0/A9rDy9P7cJ+8w1c9WD9V//9Wj15Ce2MPz8Ri6032usz+NfePxx5AcN3bN+r6ZL6jEo066/yNYB3tn4pQEx+A=="],
+    "uuid": ["uuid@14.0.0", "", { "bin": { "uuid": "dist-node/bin/uuid" } }, "sha512-Qo+uWgilfSmAhXCMav1uYFynlQO7fMFiMVZsQqZRMIXp0O7rR7qjkj+cPvBHLgBqi960QCoo/PH2/6ZtVqKvrg=="],
 
     "vite": ["vite@6.4.2", "", { "dependencies": { "esbuild": "^0.25.0", "fdir": "^6.4.4", "picomatch": "^4.0.2", "postcss": "^8.5.3", "rollup": "^4.34.9", "tinyglobby": "^0.2.13" }, "optionalDependencies": { "fsevents": "~2.3.3" }, "peerDependencies": { "@types/node": "^18.0.0 || ^20.0.0 || >=22.0.0", "jiti": ">=1.21.0", "less": "*", "lightningcss": "^1.21.0", "sass": "*", "sass-embedded": "*", "stylus": "*", "sugarss": "*", "terser": "^5.16.0", "tsx": "^4.8.1", "yaml": "^2.4.2" }, "optionalPeers": ["@types/node", "jiti", "less", "lightningcss", "sass", "sass-embedded", "stylus", "sugarss", "terser", "tsx", "yaml"], "bin": { "vite": "bin/vite.js" } }, "sha512-2N/55r4JDJ4gdrCvGgINMy+HH3iRpNIz8K6SFwVsA+JbQScLiC+clmAxBgwiSPgcG9U15QmvqCGWzMbqda5zGQ=="],
 
