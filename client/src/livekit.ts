@@ -55,12 +55,15 @@ export async function connectVoice(
     },
   });
 
-  // We still create an HTMLAudioElement and attach the track to it because
-  // (a) it makes the browser register "playing audio" for media-session
-  // purposes and (b) some legacy code paths key off the element. But the
-  // primary playback route is Web Audio (createMediaStreamSource), which on
-  // Android Chromium keeps playing when the screen is off — HTMLAudioElement
-  // gets paused by visibility-change throttling there.
+  // Single audio path: a real <audio> element. On the Android wrapper the
+  // foreground service claims AudioFocus + USAGE_MEDIA + CONTENT_TYPE_SPEECH,
+  // which is what tells the OS "we're ongoing voice playback" and prevents
+  // Chromium from pausing the element on visibility change. We previously
+  // tried Web Audio routing as a workaround for screen-off pauses (before
+  // AudioFocus was claimed), but that introduced its own failure modes
+  // (Chromium MediaStream decoder bug, audio breaking after long agent
+  // responses) and produced a "tunnel" sound when running alongside the
+  // element. With AudioFocus the simple path is the right one.
   const audioElement = document.createElement("audio");
   audioElement.autoplay = true;
   audioElement.muted = false;
@@ -68,78 +71,16 @@ export async function connectVoice(
   audioElement.setAttribute("playsinline", "");
   document.body.appendChild(audioElement);
 
-  // Create the AudioContext now while we're inside the user gesture from
-  // the Connect button. iOS in particular requires this; Android lets us
-  // create later but earlier is fine.
-  let audioContext: AudioContext | null = null;
-  try {
-    const Ctor =
-      (window as any).AudioContext || (window as any).webkitAudioContext;
-    if (Ctor) {
-      audioContext = new Ctor({ latencyHint: "interactive" }) as AudioContext;
-      void audioContext.resume();
-    }
-  } catch (err) {
-    log(`AudioContext create failed: ${(err as Error).message}`);
-  }
-
-  // Some browsers suspend AudioContext when the page is backgrounded for
-  // a long time. Resume on visibility change as a safety net so audio
-  // resumes the moment the screen wakes up — and on a periodic timer so
-  // long stretches with the screen off don't strand a suspended context.
-  const ensureRunning = () => {
-    if (audioContext && audioContext.state === "suspended") {
-      audioContext.resume().catch(() => {});
-    }
-  };
-  document.addEventListener("visibilitychange", ensureRunning);
-  const ctxKeepalive = window.setInterval(ensureRunning, 5000);
-
-  // Track per-stream Web Audio nodes so we can disconnect them on detach.
-  const audioRoutes = new Map<string, { source: MediaStreamAudioSourceNode; gain: GainNode }>();
+  // Kept for parity with the type signature; not used as a playback path.
+  const audioContext: AudioContext | null = null;
 
   const attachAudioTrack = (track: RemoteAudioTrack) => {
-    if (!audioContext || !track.mediaStreamTrack) {
-      // No AudioContext (very old browser). Audible HTMLAudioElement only.
-      audioElement.muted = false;
-      track.attach(audioElement);
-      log("audio routed via HTMLAudioElement (no AudioContext)");
-      return;
-    }
-    // Chromium bug crbug.com/121673: MediaStreamAudioSourceNode produces no
-    // sound unless the same MediaStream is also consumed by an
-    // HTMLMediaElement to "kick" the decoding pipeline. So we attach the
-    // track to audioElement AND mute it — the element drives decoding,
-    // Web Audio is the only audible output (no tunnel sound from dual
-    // playback). The silent keep-alive element (separate, set up in
-    // enableBackgroundMediaPlayback) is what keeps the page registered as
-    // "playing media" with the OS for media-session purposes.
-    try {
-      track.attach(audioElement);
-      audioElement.muted = true;
-      const stream = new MediaStream([track.mediaStreamTrack]);
-      const source = audioContext.createMediaStreamSource(stream);
-      const gain = audioContext.createGain();
-      gain.gain.value = 1.0;
-      source.connect(gain).connect(audioContext.destination);
-      audioRoutes.set(track.sid ?? String(audioRoutes.size), { source, gain });
-      log("audio routed via Web Audio (background-safe; element muted decoder-pump)");
-    } catch (err) {
-      log(`Web Audio route failed, falling back to <audio>: ${(err as Error).message}`);
-      audioElement.muted = false;
-      track.attach(audioElement);
-    }
+    track.attach(audioElement);
+    log("audio routed via HTMLAudioElement (AudioFocus keeps it alive in background)");
   };
 
   const detachAudioTrack = (track: RemoteTrack) => {
     track.detach().forEach((el) => el.remove());
-    const sid = track.sid ?? "";
-    const route = audioRoutes.get(sid);
-    if (route) {
-      try { route.source.disconnect(); } catch {}
-      try { route.gain.disconnect(); } catch {}
-      audioRoutes.delete(sid);
-    }
   };
 
   room
@@ -162,7 +103,6 @@ export async function connectVoice(
     })
     .on(RoomEvent.Reconnected, () => {
       log("reconnected");
-      ensureRunning();
       opts.onMessage?.({
         kind: "info",
         source: "WebRTC",
@@ -217,16 +157,6 @@ export async function connectVoice(
 
   const disconnect = async () => {
     await room.disconnect();
-    document.removeEventListener("visibilitychange", ensureRunning);
-    window.clearInterval(ctxKeepalive);
-    for (const route of audioRoutes.values()) {
-      try { route.source.disconnect(); } catch {}
-      try { route.gain.disconnect(); } catch {}
-    }
-    audioRoutes.clear();
-    if (audioContext) {
-      try { await audioContext.close(); } catch {}
-    }
     audioElement.remove();
     document.querySelectorAll('audio[data-role="voice-bridge-keepalive"]').forEach((el) => el.remove());
     if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
