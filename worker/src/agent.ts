@@ -142,6 +142,13 @@ class VoiceBridgeAgent extends voice.Agent {
 
     logger.info({ userText, isInterruption }, "[VoiceBridgeAgent] llmNode");
 
+    // Track whether we should play "out" after the LLM stream closes.
+    // Important: do NOT call session.say() for earcons during the LLM
+    // stream — scheduling a new SpeechHandle while pipelineReply is the
+    // current speech disrupts pipelineReply's progressive TTS playback,
+    // and the user only hears the assistant's reply at the very end.
+    let playOutAfterStreamClose = false;
+
     return new NodeReadableStream<string | llm.ChatChunk>({
       async start(controller) {
         const chunker = new SpeechChunker();
@@ -150,18 +157,10 @@ class VoiceBridgeAgent extends voice.Agent {
         let spokenCount = 0;
         let lastEmit = Date.now();
         let toolActive = false;
-        let agentStartedSpeaking = false;
-
-        const playStartEarcon = () => {
-          if (agentStartedSpeaking) return;
-          agentStartedSpeaking = true;
-          if (shouldPlay("copy")) playEarcon(session, "copy");
-        };
 
         const emit = (raw: string) => {
           const cleaned = cleanForSpeech(raw);
           if (!cleaned) return;
-          playStartEarcon();
           controller.enqueue(cleaned + " ");
           lastEmit = Date.now();
         };
@@ -176,7 +175,6 @@ class VoiceBridgeAgent extends voice.Agent {
           },
           onToolStart(toolName) {
             toolActive = true;
-            playStartEarcon();
             controller.enqueue(toolStatusMessage(toolName));
             lastEmit = Date.now();
           },
@@ -184,7 +182,9 @@ class VoiceBridgeAgent extends voice.Agent {
             toolActive = false;
           },
           onAgentEnd() {
-            if (shouldPlay("out")) playEarcon(session, "out");
+            // Defer "out" earcon — fired below after controller.close() so
+            // its SpeechHandle queues behind a fully-completed pipelineReply.
+            if (shouldPlay("out")) playOutAfterStreamClose = true;
           },
         };
 
@@ -222,6 +222,14 @@ class VoiceBridgeAgent extends voice.Agent {
         } finally {
           clearInterval(keepalive);
           controller.close();
+          // Now that pipelineReply has consumed close(), it will finish on
+          // its own. Queueing the "out" earcon here means it lands behind a
+          // pipelineReply that is already wrapping up, not one mid-stream.
+          if (playOutAfterStreamClose) {
+            // Small delay to ensure pipelineReply's TTS has truly drained
+            // before we enqueue another SpeechHandle.
+            setTimeout(() => playEarcon(session, "out"), 200);
+          }
         }
       },
       cancel() {

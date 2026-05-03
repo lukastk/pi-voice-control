@@ -57,7 +57,9 @@ export const DEFAULTS: Config = {
     earcons: {
       enabled: true,
       over: true,
-      copy: true,
+      // copy fires inside the LLM stream's pipelineReply; using session.say()
+      // there blocks pipelineReply's progressive TTS playback. Off by default.
+      copy: false,
       out: true,
       volume: 1,
     },

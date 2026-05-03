@@ -138,14 +138,17 @@ export function SettingsTab({ config }: Props) {
               />
               over <span style={{ color: "#666" }}>(user-stop)</span>
             </label>
-            <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <label
+              style={{ display: "flex", alignItems: "center", gap: 6 }}
+              title="Off by default: 'copy' uses session.say() during the LLM stream, which blocks pipelineReply's progressive TTS playback. Re-enable only if you understand the tradeoff."
+            >
               <input
                 type="checkbox"
                 checked={earconCopy}
                 disabled={!earconsEnabled}
                 onChange={(e) => setEarconCopy(e.target.checked)}
               />
-              copy <span style={{ color: "#666" }}>(agent-start)</span>
+              copy <span style={{ color: "#666" }}>(agent-start, blocks streaming)</span>
             </label>
             <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <input
