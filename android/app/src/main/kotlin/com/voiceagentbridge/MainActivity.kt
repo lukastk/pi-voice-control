@@ -39,6 +39,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private lateinit var prefs: SharedPreferences
+    private lateinit var voiceBridge: VoiceBridge
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -58,7 +59,8 @@ class MainActivity : AppCompatActivity() {
         // screen-off — Chromium hardcodes USAGE_MEDIA → STREAM_MUSIC and
         // pauses on visibility change. Browsers and PWAs without this
         // bridge keep using the Web SDK.
-        webView.addJavascriptInterface(VoiceBridge(this, webView), "AndroidVoiceBridge")
+        voiceBridge = VoiceBridge(this, webView)
+        webView.addJavascriptInterface(voiceBridge, "AndroidVoiceBridge")
 
         // Long-press anywhere in the WebView changes the URL. WebView
         // doesn't expose long-press cleanly so we attach to the layout
@@ -217,6 +219,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        // Disconnect the native LiveKit Room and cancel its coroutine scope
+        // before tearing down the WebView — otherwise the Room can outlive
+        // the Activity and keep the mic + WebRTC sockets alive.
+        voiceBridge.shutdown()
         stopService(Intent(this, VoiceForegroundService::class.java))
         webView.destroy()
     }
