@@ -123,9 +123,9 @@ export const api = {
   clearPromptOnTarget: () =>
     jsonFetch<{ ok: boolean; error?: string }>("/api/prompt/clear", { method: "POST" }),
 
-  elevenLabsVoices: () =>
+  elevenLabsVoices: (opts: { refresh?: boolean } = {}) =>
     jsonFetch<{ ok: boolean; voices: ElevenLabsVoice[]; error?: string }>(
-      "/api/voices/elevenlabs",
+      `/api/voices/elevenlabs${opts.refresh ? "?refresh=1" : ""}`,
     ),
 };
 

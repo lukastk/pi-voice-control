@@ -44,26 +44,33 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
   const [elVoicesError, setElVoicesError] = useState<string | null>(null);
   const [elVoicesLoading, setElVoicesLoading] = useState(false);
 
+  const [elRefreshTick, setElRefreshTick] = useState(0);
+
   // Lazy-load ElevenLabs voices when the user lands on the tab AND has
-  // ElevenLabs picked. Re-fetch on demand via the refresh button below.
+  // ElevenLabs picked. Refresh tick (incremented by refreshElVoices)
+  // re-runs the effect with refresh=1 to bypass the server's 5-minute cache.
   useEffect(() => {
     if (ttsProvider !== "elevenlabs") return;
-    if (elVoices !== null || elVoicesLoading) return;
+    if (elVoices !== null && elRefreshTick === 0) return;
+    if (elVoicesLoading) return;
     setElVoicesLoading(true);
     setElVoicesError(null);
+    const force = elRefreshTick > 0;
     api
-      .elevenLabsVoices()
+      .elevenLabsVoices({ refresh: force })
       .then((res) => {
         if (res.ok) setElVoices(res.voices);
         else setElVoicesError(res.error ?? "fetch failed");
       })
       .catch((err) => setElVoicesError(err.message))
       .finally(() => setElVoicesLoading(false));
-  }, [ttsProvider, elVoices, elVoicesLoading]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ttsProvider, elRefreshTick]);
 
   function refreshElVoices() {
     setElVoices(null);
     setElVoicesError(null);
+    setElRefreshTick((n) => n + 1);
   }
 
   useEffect(() => {

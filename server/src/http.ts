@@ -24,12 +24,17 @@ type ElevenLabsVoice = { voice_id: string; name: string; category?: string };
 
 let elevenLabsVoiceCache: { fetchedAt: number; voices: ElevenLabsVoice[] } | null = null;
 
-async function fetchElevenLabsVoices(): Promise<ElevenLabsVoice[]> {
+async function fetchElevenLabsVoices(opts: { force?: boolean } = {}): Promise<ElevenLabsVoice[]> {
   const apiKey = process.env.ELEVENLABS_API_KEY ?? process.env.ELEVEN_API_KEY;
   if (!apiKey) throw new Error("ELEVENLABS_API_KEY / ELEVEN_API_KEY not set");
   // 5 minute cache — voices don't change often, and the dropdown re-renders
-  // every Settings tab visit.
-  if (elevenLabsVoiceCache && Date.now() - elevenLabsVoiceCache.fetchedAt < 5 * 60_000) {
+  // every Settings tab visit. force=true bypasses, used by the UI's refresh
+  // button so a freshly-added voice shows up without waiting for TTL.
+  if (
+    !opts.force &&
+    elevenLabsVoiceCache &&
+    Date.now() - elevenLabsVoiceCache.fetchedAt < 5 * 60_000
+  ) {
     return elevenLabsVoiceCache.voices;
   }
   const res = await fetch("https://api.elevenlabs.io/v1/voices", {
@@ -230,8 +235,9 @@ export function mountApi(app: Hono) {
   });
 
   app.get("/api/voices/elevenlabs", async (c) => {
+    const force = c.req.query("refresh") === "1";
     try {
-      const voices = await fetchElevenLabsVoices();
+      const voices = await fetchElevenLabsVoices({ force });
       return c.json({ ok: true, voices });
     } catch (err: any) {
       return c.json({ ok: false, error: err.message }, 502);
