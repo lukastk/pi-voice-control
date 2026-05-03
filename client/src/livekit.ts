@@ -62,7 +62,12 @@ export async function connectVoice(
       }
     });
 
-  await room.connect(d.livekitUrl, d.token);
+  // Server hands back ws://localhost:7880 because that's how it knows the
+  // LiveKit instance. From a mobile/Tailscale client, "localhost" means the
+  // phone itself. Rewrite the hostname to match the page's host so
+  // ws://<host>:7880 resolves to the same machine the HTTP server is on.
+  const livekitUrl = rewriteLocalhost(d.livekitUrl);
+  await room.connect(livekitUrl, d.token);
   // Always pre-warm the mic device so the browser permission prompt fires
   // here, not on the first manual-mode tap. We immediately mute if the user
   // is in manual mode — setMicrophoneEnabled(true) is needed to publish a
@@ -81,6 +86,26 @@ export async function connectVoice(
   };
 
   return { room, audioElement, disconnect };
+}
+
+/**
+ * If the URL points at localhost / 127.0.0.1 / ::1, swap the hostname for
+ * the page's current hostname. Required for mobile / Tailscale access where
+ * "localhost" on the client = the phone itself, not the Mac running LiveKit.
+ * Leaves explicit external hostnames alone so a deployment behind a real
+ * LiveKit URL still works.
+ */
+function rewriteLocalhost(url: string): string {
+  if (typeof window === "undefined") return url;
+  try {
+    const u = new URL(url);
+    if (u.hostname === "localhost" || u.hostname === "127.0.0.1" || u.hostname === "::1") {
+      u.hostname = window.location.hostname;
+    }
+    return u.toString();
+  } catch {
+    return url;
+  }
 }
 
 /**
