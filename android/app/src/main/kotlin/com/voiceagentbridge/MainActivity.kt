@@ -52,6 +52,14 @@ class MainActivity : AppCompatActivity() {
         webView = findViewById(R.id.webview)
         configureWebView()
 
+        // Expose AndroidVoiceBridge to JS so the React app can use the
+        // native LiveKit Android SDK in this wrapper instead of the
+        // WebView's Web SDK. The WebView's audio path doesn't survive
+        // screen-off — Chromium hardcodes USAGE_MEDIA → STREAM_MUSIC and
+        // pauses on visibility change. Browsers and PWAs without this
+        // bridge keep using the Web SDK.
+        webView.addJavascriptInterface(VoiceBridge(this, webView), "AndroidVoiceBridge")
+
         // Long-press anywhere in the WebView changes the URL. WebView
         // doesn't expose long-press cleanly so we attach to the layout
         // backdrop instead.

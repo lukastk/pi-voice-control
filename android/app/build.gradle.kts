@@ -41,4 +41,9 @@ android {
 dependencies {
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.core:core-ktx:1.13.1")
+    // Native LiveKit SDK so audio plays through STREAM_VOICE_CALL +
+    // MODE_IN_COMMUNICATION and survives screen-off. We can't make the
+    // WebView do this from outside — Chromium hardcodes USAGE_MEDIA +
+    // STREAM_MUSIC, which the OS pauses on visibility change.
+    implementation("io.livekit:livekit-android:2.25.1")
 }
