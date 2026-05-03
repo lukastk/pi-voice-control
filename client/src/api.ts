@@ -24,6 +24,12 @@ export type Config = {
       out: boolean;
       volume: number;
     };
+    stt: {
+      provider: "openai-whisper" | "deepgram";
+      model: string;
+      language: string;
+    };
+    turnMode: "vad" | "manual";
   };
 };
 
@@ -62,6 +68,15 @@ export const api = {
   refreshSessions: () =>
     jsonFetch<PiSession[]>("/api/sessions/refresh", { method: "POST" }),
   resolveDefault: () => jsonFetch<DefaultResolution>("/api/sessions/default"),
+  spawnInFolder: (folder?: string) =>
+    jsonFetch<{ ok: boolean; socketPath: string; session: PiSession | null; folder: string }>(
+      "/api/sessions/spawn",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(folder ? { folder } : {}),
+      },
+    ),
 
   selectSession: (socketPath: string) =>
     jsonFetch<DispatchResult>("/api/sessions/select", {

@@ -79,6 +79,43 @@ body,
   color: #888;
 }
 
+.session-label {
+  font-size: 11px;
+  color: #c0c0d0;
+  margin-right: 10px;
+  padding: 2px 8px;
+  background: #1a3a2e;
+  border: 1px solid #3a7a4a;
+  border-radius: 3px;
+  font-family: "SF Mono", "Fira Code", monospace;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.talk-btn {
+  font-size: 11px;
+  padding: 4px 12px;
+  margin-right: 10px;
+  background: #2a2a40;
+  color: #c0c0d0;
+  border: 1px solid #3a3a55;
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.talk-btn:hover {
+  background: #333350;
+}
+
+.talk-btn-active {
+  background: #5a3a3a;
+  border-color: #a33;
+  color: #ffd0d0;
+}
+
 .voice-connected {
   color: #00cc66;
 }

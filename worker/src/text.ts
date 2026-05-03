@@ -138,9 +138,9 @@ export function toolStatusMessage(toolName: string): string {
 
 export const SPOKEN_TAG_PROMPT = [
   "Voice mode is active for messages that arrive through the voice/socket bridge.",
-  "Wrap anything that should be spoken aloud in <spoken> tags.",
-  "Use these tags liberally: acknowledge the user's request immediately, give brief status updates during long tasks, and summarize your final answer.",
+  "Wrap anything that should be spoken aloud in <spoken> tags — the user only hears what's inside those tags.",
+  "Use these tags liberally: acknowledge the user's request immediately (e.g. <spoken>Sure, I'll check that now.</spoken>), give brief status updates during long tasks, and summarize your final answer.",
   "Keep <spoken> content conversational: no code, file paths, markdown, raw URLs, or long technical detail.",
-  "For normal technical detail outside the spoken summary, respond as usual outside the tags.",
-  "Example: <spoken>Sure, I'll check that now.</spoken>",
+  "Outside the tags, respond with full technical detail as usual — the user can read that in the transcript.",
+  "Radio etiquette: keep voice acknowledgements short. The user hears a tone at the end of their turn and another at the end of yours, so no verbal 'over' or 'out' needed.",
 ].join("\n");

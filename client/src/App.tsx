@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { TerminalTab } from "./tabs/TerminalTab.tsx";
 import { SessionsTab } from "./tabs/SessionsTab.tsx";
 import { PromptTab } from "./tabs/PromptTab.tsx";
@@ -6,6 +6,7 @@ import { SettingsTab } from "./tabs/SettingsTab.tsx";
 import { useServerState } from "./state.ts";
 import { useVoice } from "./voice.ts";
 import { api } from "./api.ts";
+import { basename } from "./util.ts";
 
 type TabId = "terminal" | "sessions" | "prompt" | "settings";
 
@@ -20,6 +21,12 @@ export function App() {
   const [tab, setTab] = useState<TabId>("sessions");
   const server = useServerState();
   const voice = useVoice();
+
+  const connectedSession = useMemo(() => {
+    const v = voice.state;
+    if (v.kind !== "connected") return null;
+    return server.sessions.find((s) => s.socketPath === v.socketPath) ?? null;
+  }, [voice.state, server.sessions]);
   const [resolveStatus, setResolveStatus] = useState<string | null>(null);
   const lastResolvedFolder = useRef<string | null | undefined>(undefined);
 
@@ -65,6 +72,20 @@ export function App() {
           </button>
         ))}
         <div className="tabbar-spacer" />
+        {voice.state.kind === "connected" && server.config?.voice.turnMode === "manual" && (
+          <button
+            className={`talk-btn ${voice.micMuted ? "" : "talk-btn-active"}`}
+            onClick={() => voice.toggleMic()}
+            title={voice.micMuted ? "Tap to start talking" : "Tap to stop talking"}
+          >
+            {voice.micMuted ? "🎤 Tap to talk" : "🎤 Talking — tap to stop"}
+          </button>
+        )}
+        {voice.state.kind === "connected" && connectedSession && (
+          <span className="session-label" title={connectedSession.cwd ?? connectedSession.socketPath}>
+            {connectedSession.cwd ? basename(connectedSession.cwd) : connectedSession.sessionId.slice(0, 8)}
+          </span>
+        )}
         <span
           className={`voice-badge voice-${voice.state.kind}`}
           title={`voice: ${voice.state.kind}`}

@@ -79,6 +79,7 @@ export function mountApi(app: Hono) {
         socketPath,
         appendSystemPrompt: appendedPrompt,
         earcons: cfg.voice.earcons,
+        stt: cfg.voice.stt,
       });
       setCurrentTarget({
         socketPath,
@@ -123,6 +124,37 @@ export function mountApi(app: Hono) {
    *   - Else if spawnIfMissing → spawn one and wait for the socket.
    *   - Else return { kind: "missing" }.
    */
+  /**
+   * Always spawn a fresh Pi in the given folder (or config.defaultFolder if
+   * omitted). Unlike /api/sessions/default this does NOT first check for an
+   * existing matching session — it always creates a new tmux window + Pi
+   * process. Useful when the user wants a parallel session in the same
+   * folder.
+   */
+  app.post("/api/sessions/spawn", async (c) => {
+    const cfg = getConfig();
+    const body = await c.req.json().catch(() => ({}));
+    const requested = typeof body.folder === "string" ? body.folder : null;
+    const folderRaw = requested ?? cfg.startup.defaultFolder;
+    if (!folderRaw) {
+      return c.json({ error: "no folder specified and no defaultFolder configured" }, 400);
+    }
+    const folder = expandTilde(folderRaw);
+    try {
+      const newPath = await spawnPiInFolder({
+        tmuxSocketName: cfg.tmux.socketName,
+        spawnTmuxSession: cfg.startup.spawnTmuxSession,
+        socketsDir: cfg.pi.socketsDir,
+        folder,
+      });
+      const fresh = await pollOnce();
+      const session = fresh.find((s) => s.socketPath === newPath) ?? null;
+      return c.json({ ok: true, socketPath: newPath, session, folder });
+    } catch (err: any) {
+      return c.json({ error: `spawn failed: ${err.message}` }, 500);
+    }
+  });
+
   app.get("/api/sessions/default", async (c) => {
     const cfg = getConfig();
     const folder = cfg.startup.defaultFolder ? expandTilde(cfg.startup.defaultFolder) : null;

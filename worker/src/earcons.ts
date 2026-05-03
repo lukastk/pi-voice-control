@@ -34,7 +34,7 @@ function effectiveVolume(): number {
   return BASE_VOLUME * volumeMultiplier;
 }
 
-export type EarconKind = "over" | "copy" | "out";
+export type EarconKind = "over" | "copy" | "out" | "connect";
 
 function tone(freqHz: number, durationMs: number, fadeMs = 6): Int16Array {
   const samples = Math.max(1, Math.floor((durationMs / 1000) * SAMPLE_RATE));
@@ -70,6 +70,9 @@ function build(): Record<EarconKind, Int16Array> {
     over: tone(900, 80),
     copy: concat(tone(620, 55), tone(880, 55)),
     out: tone(540, 80),
+    // Three-note ascending arpeggio — distinctive "voice ready" cue,
+    // played once when the worker connects to a Pi session.
+    connect: concat(tone(523, 70), tone(659, 70), tone(784, 110)),
   };
 }
 

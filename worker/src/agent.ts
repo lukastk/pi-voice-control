@@ -16,6 +16,7 @@ import {
   voice,
 } from "@livekit/agents";
 import { STT as OpenAISTT } from "@livekit/agents-plugin-openai";
+import { STT as DeepgramSTT } from "@livekit/agents-plugin-deepgram";
 import { TTS as ElevenLabsTTS } from "@livekit/agents-plugin-elevenlabs";
 import * as silero from "@livekit/agents-plugin-silero";
 import { fileURLToPath } from "node:url";
@@ -46,10 +47,17 @@ type EarconConfig = {
   volume: number;
 };
 
+type SttConfig = {
+  provider: "openai-whisper" | "deepgram";
+  model: string;
+  language: string;
+};
+
 type JobMetadata = {
   socketPath: string;
   appendSystemPrompt?: string; // overrides default if provided
   earcons?: EarconConfig;
+  stt?: SttConfig;
 };
 
 const DEFAULT_EARCONS: EarconConfig = {
@@ -266,10 +274,25 @@ export default defineAgent({
 
     pi.appendSystemPrompt(meta.appendSystemPrompt ?? SPOKEN_TAG_PROMPT);
 
+    const sttCfg = meta.stt ?? { provider: "openai-whisper", model: "whisper-1", language: "en" };
+    const stt =
+      sttCfg.provider === "deepgram"
+        ? new DeepgramSTT({
+            // STTModels is a strict literal union in the plugin; cast since we
+            // accept a free-form string from config and let runtime validate.
+            model: (sttCfg.model || "nova-3") as any,
+            language: sttCfg.language || "en",
+          })
+        : new OpenAISTT({
+            model: (sttCfg.model || "whisper-1") as any,
+            language: sttCfg.language || "en",
+          });
+    logger.info({ stt: sttCfg }, "[worker] STT configured");
+
     const agent = new VoiceBridgeAgent(pi);
     const session = new voice.AgentSession({
       vad: ctx.proc.userData.vad as silero.VAD,
-      stt: new OpenAISTT({ model: "whisper-1", language: "en" }),
+      stt,
       tts: new ElevenLabsTTS({
         model: "eleven_flash_v2_5",
         voiceId: process.env.ELEVENLABS_VOICE_ID || "CwhRBWXzGAHq8TQ4Fs17",
@@ -289,9 +312,9 @@ export default defineAgent({
 
     await session.start({ agent, room: ctx.room });
     logger.info("[worker] voice session started");
-    session.say(
-      "Hello, I'm connected to your Pi session. You can speak here or type in tmux.",
-    );
+    // No spoken greeting — play a short ascending tone instead so the user
+    // gets an unambiguous "voice connected" cue without TTS chatter.
+    if (activeEarcons.enabled) playEarcon(session, "connect");
 
     ctx.room.on("disconnected", () => {
       logger.info("[worker] room disconnected — closing Pi socket");

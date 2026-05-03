@@ -35,6 +35,7 @@
       "name": "@voice-agent-bridge/worker",
       "dependencies": {
         "@livekit/agents": "^1.2.7",
+        "@livekit/agents-plugin-deepgram": "^1.2.7",
         "@livekit/agents-plugin-elevenlabs": "^1.2.7",
         "@livekit/agents-plugin-openai": "^1.2.7",
         "@livekit/agents-plugin-silero": "^1.2.7",
@@ -235,6 +236,8 @@
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
 
     "@livekit/agents": ["@livekit/agents@1.3.0", "", { "dependencies": { "@bufbuild/protobuf": "^1.10.0", "@ffmpeg-installer/ffmpeg": "^1.1.0", "@livekit/mutex": "^1.1.1", "@livekit/protocol": "^1.45.3", "@livekit/throws-transformer": "0.1.8", "@livekit/typed-emitter": "^3.0.0", "@opentelemetry/api": "^1.9.0", "@opentelemetry/api-logs": "^0.54.0", "@opentelemetry/core": "^2.2.0", "@opentelemetry/exporter-logs-otlp-proto": "^0.54.0", "@opentelemetry/exporter-trace-otlp-proto": "^0.54.0", "@opentelemetry/instrumentation-pino": "^0.43.0", "@opentelemetry/otlp-exporter-base": "^0.208.0", "@opentelemetry/resources": "^1.28.0", "@opentelemetry/sdk-logs": "^0.54.0", "@opentelemetry/sdk-trace-base": "^1.28.0", "@opentelemetry/sdk-trace-node": "^1.28.0", "@opentelemetry/semantic-conventions": "^1.28.0", "@types/pidusage": "^2.0.5", "commander": "^12.0.0", "fluent-ffmpeg": "^2.1.3", "form-data": "^4.0.5", "heap-js": "^2.6.0", "json-schema": "^0.4.0", "livekit-server-sdk": "^2.14.1", "ofetch": "^1.5.1", "openai": "^6.8.1", "pidusage": "^4.0.1", "pino": "^8.19.0", "pino-pretty": "^11.0.0", "sharp": "0.34.5", "uuid": "^11.1.0", "ws": "^8.18.0", "zod-to-json-schema": "^3.24.6" }, "peerDependencies": { "@livekit/rtc-node": "^0.13.25", "zod": "^3.25.76 || ^4.1.8" } }, "sha512-Q5ViTDtC7Gwrk/6CB2PDe+giu/pFcoKrVR5n25yGtcfkJeVE71xOK8PGtHwYFCXO6DS+j3wbPV26IKMUBC6KGw=="],
+
+    "@livekit/agents-plugin-deepgram": ["@livekit/agents-plugin-deepgram@1.3.0", "", { "dependencies": { "ws": "^8.18.0" }, "peerDependencies": { "@livekit/agents": "1.3.0", "@livekit/rtc-node": "^0.13.25" } }, "sha512-W97/8sQX41ZxsSagzONgh5ENVJJuj/dnpB9vXVCsHoa50+APzUnSvpg3a1sasbwmc1hXQoVIyCMT/cbGce9Y2w=="],
 
     "@livekit/agents-plugin-elevenlabs": ["@livekit/agents-plugin-elevenlabs@1.3.0", "", { "dependencies": { "@livekit/mutex": "^1.1.1", "ws": "^8.18.0" }, "peerDependencies": { "@livekit/agents": "1.3.0", "@livekit/rtc-node": "^0.13.25" } }, "sha512-kW5fpYtBlBnjL31sA2mFF6ky6ME+beOSXE/AwCn6sX8ljSXGIImBZZyXLvKpX6GAcUTwGLUlbXEwKG755ttzDQ=="],
 

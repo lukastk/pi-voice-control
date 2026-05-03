@@ -7,7 +7,10 @@
  */
 import { useCallback, useRef, useState } from "react";
 import { api } from "./api.ts";
-import { connectVoice, type VoiceHandle } from "./livekit.ts";
+import { connectVoice, setMicMuted, type VoiceHandle } from "./livekit.ts";
+
+// re-export for convenience in App when wiring connect()
+export type { VoiceHandle };
 
 export type VoiceState =
   | { kind: "idle" }
@@ -15,9 +18,15 @@ export type VoiceState =
   | { kind: "connected"; socketPath: string }
   | { kind: "error"; socketPath: string; message: string };
 
+type ConnectOptions = {
+  /** "manual" mode starts with mic muted; "vad" lets it stay open. */
+  turnMode: "vad" | "manual";
+};
+
 export function useVoice() {
   const [state, setState] = useState<VoiceState>({ kind: "idle" });
   const [log, setLog] = useState<string[]>([]);
+  const [micMuted, setMicMutedState] = useState<boolean>(false);
   const handleRef = useRef<VoiceHandle | null>(null);
 
   const append = useCallback((line: string) => {
@@ -25,18 +34,19 @@ export function useVoice() {
   }, []);
 
   const connect = useCallback(
-    async (socketPath: string) => {
-      append(`select ${socketPath}`);
+    async (socketPath: string, opts: ConnectOptions) => {
+      append(`select ${socketPath} (mode=${opts.turnMode})`);
       setState({ kind: "connecting", socketPath });
+      const startMicEnabled = opts.turnMode === "vad";
+      setMicMutedState(!startMicEnabled);
       try {
-        // Tear down old handle locally before the server replaces the dispatch.
         if (handleRef.current) {
           await handleRef.current.disconnect();
           handleRef.current = null;
         }
         const dispatch = await api.selectSession(socketPath);
         append(`room=${dispatch.roomName}`);
-        const handle = await connectVoice(dispatch, append);
+        const handle = await connectVoice(dispatch, append, { startMicEnabled });
         handleRef.current = handle;
         setState({ kind: "connected", socketPath });
       } catch (err: any) {
@@ -55,8 +65,17 @@ export function useVoice() {
     }
     await api.releaseSession();
     setState({ kind: "idle" });
+    setMicMutedState(false);
     append("disconnected");
   }, [append]);
 
-  return { state, log, connect, disconnect };
+  const toggleMic = useCallback(async () => {
+    if (!handleRef.current) return;
+    const next = !micMuted;
+    await setMicMuted(handleRef.current, next);
+    setMicMutedState(next);
+    append(next ? "mic muted" : "mic unmuted (talk now)");
+  }, [append, micMuted]);
+
+  return { state, log, connect, disconnect, micMuted, toggleMic };
 }

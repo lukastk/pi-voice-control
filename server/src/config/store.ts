@@ -32,8 +32,14 @@ export type Config = {
       over: boolean;
       copy: boolean;
       out: boolean;
-      volume: number; // 0..1 multiplier on top of synth's baseline volume
+      volume: number;
     };
+    stt: {
+      provider: "openai-whisper" | "deepgram";
+      model: string;       // openai: "whisper-1"; deepgram: "nova-3" / "nova-2-general"
+      language: string;    // ISO code, e.g. "en"
+    };
+    turnMode: "vad" | "manual";
   };
 };
 
@@ -57,12 +63,16 @@ export const DEFAULTS: Config = {
     earcons: {
       enabled: true,
       over: true,
-      // copy fires inside the LLM stream's pipelineReply; using session.say()
-      // there blocks pipelineReply's progressive TTS playback. Off by default.
       copy: false,
       out: true,
       volume: 1,
     },
+    stt: {
+      provider: "openai-whisper",
+      model: "whisper-1",
+      language: "en",
+    },
+    turnMode: "vad",
   },
 };
 

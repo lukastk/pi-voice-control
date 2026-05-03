@@ -32,11 +32,18 @@ export type EarconConfig = {
   volume: number;
 };
 
+export type SttConfig = {
+  provider: "openai-whisper" | "deepgram";
+  model: string;
+  language: string;
+};
+
 export async function dispatchVoiceAgent(opts: {
   socketPath: string;
   appendSystemPrompt?: string;
   identity?: string;
   earcons?: EarconConfig;
+  stt?: SttConfig;
 }): Promise<DispatchResult> {
   const roomName = `voice-${cryptoRandomShort()}`;
   const identity = opts.identity ?? "user";
@@ -46,6 +53,7 @@ export async function dispatchVoiceAgent(opts: {
       socketPath: opts.socketPath,
       appendSystemPrompt: opts.appendSystemPrompt,
       earcons: opts.earcons,
+      stt: opts.stt,
     }),
   });
 

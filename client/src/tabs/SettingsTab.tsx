@@ -15,6 +15,11 @@ export function SettingsTab({ config }: Props) {
   const [earconOut, setEarconOut] = useState(true);
   const [earconVolume, setEarconVolume] = useState(1);
 
+  const [sttProvider, setSttProvider] = useState<"openai-whisper" | "deepgram">("openai-whisper");
+  const [sttModel, setSttModel] = useState("whisper-1");
+  const [sttLanguage, setSttLanguage] = useState("en");
+  const [turnMode, setTurnMode] = useState<"vad" | "manual">("vad");
+
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -29,6 +34,10 @@ export function SettingsTab({ config }: Props) {
     setEarconCopy(config.voice.earcons.copy);
     setEarconOut(config.voice.earcons.out);
     setEarconVolume(config.voice.earcons.volume);
+    setSttProvider(config.voice.stt.provider);
+    setSttModel(config.voice.stt.model);
+    setSttLanguage(config.voice.stt.language);
+    setTurnMode(config.voice.turnMode);
   }, [config]);
 
   async function save() {
@@ -49,11 +58,29 @@ export function SettingsTab({ config }: Props) {
             out: earconOut,
             volume: earconVolume,
           },
+          stt: {
+            provider: sttProvider,
+            model: sttModel || (sttProvider === "deepgram" ? "nova-3" : "whisper-1"),
+            language: sttLanguage || "en",
+          },
+          turnMode,
         },
       });
       setSavedAt(Date.now());
     } catch (err: any) {
       setError(err.message);
+    }
+  }
+
+  function onProviderChange(p: "openai-whisper" | "deepgram") {
+    setSttProvider(p);
+    // Auto-fill the model with that provider's default if the user hasn't
+    // typed a custom one yet (or the previous model is the other provider's
+    // default).
+    if (p === "deepgram" && (sttModel === "" || sttModel === "whisper-1")) {
+      setSttModel("nova-3");
+    } else if (p === "openai-whisper" && (sttModel === "" || sttModel.startsWith("nova-"))) {
+      setSttModel("whisper-1");
     }
   }
 
@@ -112,6 +139,65 @@ export function SettingsTab({ config }: Props) {
           />
           <p style={hintStyle}>
             When spawning a Pi, a window is created inside this tmux session.
+          </p>
+        </Field>
+      </Section>
+
+      <Section title="Speech recognition (STT)">
+        <Field label="Provider">
+          <select
+            value={sttProvider}
+            onChange={(e) => onProviderChange(e.target.value as "openai-whisper" | "deepgram")}
+            style={inputStyle}
+          >
+            <option value="openai-whisper">OpenAI Whisper (uses OPENAI_API_KEY)</option>
+            <option value="deepgram">Deepgram (uses DEEPGRAM_API_KEY)</option>
+          </select>
+          <p style={hintStyle}>
+            Takes effect on the next voice connection. Make sure the matching env var is
+            set when you launched the server.
+          </p>
+        </Field>
+        <Field label="Model">
+          <input
+            type="text"
+            value={sttModel}
+            onChange={(e) => setSttModel(e.target.value)}
+            placeholder={sttProvider === "deepgram" ? "nova-3" : "whisper-1"}
+            style={inputStyle}
+          />
+          <p style={hintStyle}>
+            {sttProvider === "deepgram"
+              ? 'Try "nova-3" (best) or "nova-2-general".'
+              : 'Use "whisper-1" — OpenAI only exposes one Whisper model in the API.'}
+          </p>
+        </Field>
+        <Field label="Language">
+          <input
+            type="text"
+            value={sttLanguage}
+            onChange={(e) => setSttLanguage(e.target.value)}
+            placeholder="en"
+            style={inputStyle}
+          />
+          <p style={hintStyle}>ISO 639-1 code, e.g. en, de, fr.</p>
+        </Field>
+      </Section>
+
+      <Section title="Turn detection">
+        <Field label="Mode">
+          <select
+            value={turnMode}
+            onChange={(e) => setTurnMode(e.target.value as "vad" | "manual")}
+            style={inputStyle}
+          >
+            <option value="vad">Automatic (VAD detects when you stop speaking)</option>
+            <option value="manual">Manual (push-to-talk: tap a button to start/stop)</option>
+          </select>
+          <p style={hintStyle}>
+            Manual mode mutes the mic until you press the "Tap to talk" button in the top
+            bar; tap again to stop. Useful in noisy environments where VAD false-triggers.
+            Takes effect on the next voice connection.
           </p>
         </Field>
       </Section>

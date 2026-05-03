@@ -1,6 +1,6 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { PiSession } from "../types.ts";
-import type { Config } from "../api.ts";
+import { api, type Config } from "../api.ts";
 import type { useVoice } from "../voice.ts";
 
 type Props = {
@@ -20,6 +20,22 @@ function realpathLikeEqual(a: string | null | undefined, b: string | null | unde
 
 export function SessionsTab({ sessions, config, voice, onRefresh, resolveStatus }: Props) {
   const defaultFolder = config?.startup.defaultFolder ?? null;
+  const [spawning, setSpawning] = useState(false);
+  const [spawnError, setSpawnError] = useState<string | null>(null);
+
+  async function spawnInDefault() {
+    if (!defaultFolder) return;
+    setSpawning(true);
+    setSpawnError(null);
+    try {
+      await api.spawnInFolder();
+      await onRefresh();
+    } catch (err: any) {
+      setSpawnError(err.message);
+    } finally {
+      setSpawning(false);
+    }
+  }
 
   const sorted = useMemo(() => {
     const matches = (s: PiSession) =>
@@ -34,14 +50,39 @@ export function SessionsTab({ sessions, config, voice, onRefresh, resolveStatus 
 
   return (
     <div style={{ padding: 16 }}>
-      <header style={{ display: "flex", alignItems: "center", marginBottom: 12 }}>
+      <header style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12 }}>
         <h2 style={{ fontSize: 14, color: "#c0c0d0", flex: 1 }}>
           Pi sessions ({sessions.length})
         </h2>
+        {defaultFolder && (
+          <button
+            onClick={spawnInDefault}
+            disabled={spawning}
+            style={btnGhost}
+            title={`Always starts a new Pi in ${defaultFolder}, even if one is already running there.`}
+          >
+            {spawning ? "Spawning…" : "+ New in default"}
+          </button>
+        )}
         <button onClick={() => onRefresh()} style={btnGhost}>
           Refresh
         </button>
       </header>
+      {spawnError && (
+        <div
+          style={{
+            marginBottom: 10,
+            padding: "6px 10px",
+            background: "#3a1a1a",
+            border: "1px solid #8a2a2a",
+            borderRadius: 4,
+            fontSize: 11,
+            color: "#ffa8a8",
+          }}
+        >
+          spawn failed: {spawnError}
+        </div>
+      )}
       {resolveStatus && (
         <div
           style={{
@@ -114,7 +155,12 @@ export function SessionsTab({ sessions, config, voice, onRefresh, resolveStatus 
                       Disconnect
                     </button>
                   ) : (
-                    <button onClick={() => voice.connect(s.socketPath)} style={btnPrimary}>
+                    <button
+                      onClick={() =>
+                        voice.connect(s.socketPath, { turnMode: config?.voice.turnMode ?? "vad" })
+                      }
+                      style={btnPrimary}
+                    >
                       Connect voice
                     </button>
                   )}
