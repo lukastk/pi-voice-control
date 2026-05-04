@@ -51,6 +51,10 @@ export type Config = {
       // Stripped from the message before it's sent to Pi.
       start: string;
       end: string;
+      // Fuzzy-match similarity threshold in [0..1]. 1.0 = exact match;
+      // ~0.75 lets common STT mishearings match (e.g. "high come in" ≈
+      // "pi come in"). Lower = more permissive but more false triggers.
+      matchThreshold: number;
     };
   };
 };
@@ -93,6 +97,7 @@ export const DEFAULTS: Config = {
     keywords: {
       start: "Pi, come in",
       end: "Pi, that's all",
+      matchThreshold: 0.75,
     },
   },
 };

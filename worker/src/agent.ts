@@ -84,6 +84,7 @@ type TurnMode = "vad" | "manual" | "keyword";
 type KeywordConfig = {
   start: string;
   end: string;
+  matchThreshold: number;
 };
 
 type JobMetadata = {
@@ -109,46 +110,112 @@ let activeEarcons: EarconConfig = DEFAULT_EARCONS;
 const DEFAULT_KEYWORDS: KeywordConfig = {
   start: "Pi, come in",
   end: "Pi, that's all",
+  matchThreshold: 0.75,
 };
 
 let activeTurnMode: TurnMode = "vad";
 let activeKeywords: KeywordConfig = DEFAULT_KEYWORDS;
 
-/** Case-insensitive substring match, ignoring punctuation differences
- *  ("pi, come in" / "Pi come in" / "pi  come  in" all match). Returns
- *  the [start, end) char index range of the first match, or null. */
-function findKeyword(transcript: string, keyword: string): [number, number] | null {
-  if (!keyword.trim()) return null;
-  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
-  const T = transcript.toLowerCase();
-  const Tnorm = norm(transcript);
-  const Knorm = norm(keyword);
-  if (!Knorm) return null;
-  const idx = Tnorm.indexOf(Knorm);
-  if (idx === -1) return null;
-  // Map normalized index back into the original transcript by walking
-  // through and accumulating character count from non-stripped chars.
-  // For our purposes a coarse range is fine; we strip via regex below.
-  // Use a regex on the lowercased original instead to get accurate bounds.
-  // Build a tolerant regex from the keyword: each non-space char is literal,
-  // runs of spaces match \s+, and punctuation between words is allowed.
-  const escaped = Knorm.split(/\s+/).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  const pattern = new RegExp(escaped.join("[\\s\\W]+"), "i");
-  const m = pattern.exec(transcript);
-  if (!m) {
-    // Fallback: use the lowercased substring offset against original.
-    const start = T.indexOf(Knorm);
-    if (start === -1) return null;
-    return [start, start + Knorm.length];
+/** Standard Levenshtein distance, two-row dynamic programming. */
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+  let prev = new Array(b.length + 1);
+  let curr = new Array(b.length + 1);
+  for (let j = 0; j <= b.length; j++) prev[j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);
+    }
+    [prev, curr] = [curr, prev];
   }
-  return [m.index, m.index + m[0].length];
+  return prev[b.length];
+}
+
+function normalizeForMatch(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Find the best match of `keyword` inside `transcript` using token-level
+ * fuzzy matching. Slides word windows of size N±1 (where N = keyword
+ * word count) and scores each via Levenshtein. Returns the [start, end)
+ * char range in the original transcript if best score >= threshold,
+ * else null. Threshold of 1.0 effectively requires exact match.
+ *
+ * Token-level (rather than raw char-level) so a single mistranscribed
+ * word like "high" → "pi" doesn't tank the score for the whole phrase.
+ */
+function findKeyword(
+  transcript: string,
+  keyword: string,
+  threshold: number,
+): { range: [number, number]; score: number } | null {
+  const tNorm = normalizeForMatch(transcript);
+  const kNorm = normalizeForMatch(keyword);
+  if (!tNorm || !kNorm) return null;
+
+  const tWords = tNorm.split(" ");
+  const kWords = kNorm.split(" ");
+  const k = kWords.length;
+
+  let bestScore = 0;
+  let bestWindow: [number, number] | null = null;
+
+  const sizes = new Set([Math.max(1, k - 1), k, k + 1]);
+  for (const winSize of sizes) {
+    if (winSize > tWords.length) continue;
+    for (let start = 0; start + winSize <= tWords.length; start++) {
+      const window = tWords.slice(start, start + winSize).join(" ");
+      const dist = levenshtein(window, kNorm);
+      const maxLen = Math.max(window.length, kNorm.length);
+      const score = maxLen === 0 ? 0 : 1 - dist / maxLen;
+      if (score > bestScore) {
+        bestScore = score;
+        bestWindow = [start, start + winSize];
+      }
+    }
+  }
+
+  if (bestScore < threshold || !bestWindow) return null;
+
+  // Map the normalized word window back to char positions in the
+  // original transcript. We walk the original looking for word
+  // boundaries (alphanumeric runs).
+  const wordSpans: { start: number; end: number }[] = [];
+  let inWord = false;
+  let wordStart = 0;
+  for (let i = 0; i < transcript.length; i++) {
+    const isAlnum = /[a-z0-9]/i.test(transcript[i]!);
+    if (isAlnum && !inWord) {
+      inWord = true;
+      wordStart = i;
+    } else if (!isAlnum && inWord) {
+      inWord = false;
+      wordSpans.push({ start: wordStart, end: i });
+    }
+  }
+  if (inWord) wordSpans.push({ start: wordStart, end: transcript.length });
+
+  if (bestWindow[0] >= wordSpans.length || bestWindow[1] > wordSpans.length) {
+    // Defensive: word counts mismatched (shouldn't happen with our
+    // normalization, but be robust).
+    return null;
+  }
+  return {
+    range: [wordSpans[bestWindow[0]]!.start, wordSpans[bestWindow[1] - 1]!.end],
+    score: bestScore,
+  };
 }
 
 function stripKeywords(text: string): string {
   let out = text;
   for (const k of [activeKeywords.start, activeKeywords.end]) {
-    const range = findKeyword(out, k);
-    if (range) out = (out.slice(0, range[0]) + " " + out.slice(range[1])).trim();
+    const m = findKeyword(out, k, activeKeywords.matchThreshold);
+    if (m) out = (out.slice(0, m.range[0]) + " " + out.slice(m.range[1])).trim();
   }
   return out.replace(/\s+/g, " ").replace(/^[\s,.;:!?]+|[\s,.;:!?]+$/g, "").trim();
 }
@@ -534,22 +601,29 @@ export default defineAgent({
 
       if (activeTurnMode === "keyword") {
         const transcript = ev.transcript ?? "";
+        const threshold = activeKeywords.matchThreshold;
         // Scan partials too — Deepgram emits ~150ms partials and we want
         // to react to keywords as soon as they're recognized rather than
         // waiting for the STT final.
-        if (!keywordArmed && findKeyword(transcript, activeKeywords.start)) {
-          keywordArmed = true;
-          diagLog("keyword armed", { startKeyword: activeKeywords.start });
-          if (shouldPlay("copy")) playEarcon(session, "copy");
+        if (!keywordArmed) {
+          const m = findKeyword(transcript, activeKeywords.start, threshold);
+          if (m) {
+            keywordArmed = true;
+            diagLog("keyword armed", { startKeyword: activeKeywords.start, score: m.score });
+            if (shouldPlay("copy")) playEarcon(session, "copy");
+          }
         }
-        if (keywordArmed && findKeyword(transcript, activeKeywords.end)) {
-          keywordArmed = false;
-          diagLog("keyword end → commitUserTurn", { endKeyword: activeKeywords.end });
-          if (shouldPlay("over")) playEarcon(session, "over");
-          try {
-            session.commitUserTurn();
-          } catch (err) {
-            logger.warn({ err }, "[worker] commitUserTurn failed");
+        if (keywordArmed) {
+          const m = findKeyword(transcript, activeKeywords.end, threshold);
+          if (m) {
+            keywordArmed = false;
+            diagLog("keyword end → commitUserTurn", { endKeyword: activeKeywords.end, score: m.score });
+            if (shouldPlay("over")) playEarcon(session, "over");
+            try {
+              session.commitUserTurn();
+            } catch (err) {
+              logger.warn({ err }, "[worker] commitUserTurn failed");
+            }
           }
         }
         return; // skip the VAD-mode over earcon below

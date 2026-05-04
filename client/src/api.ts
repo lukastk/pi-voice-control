@@ -38,6 +38,7 @@ export type Config = {
     keywords: {
       start: string;
       end: string;
+      matchThreshold: number;
     };
   };
 };

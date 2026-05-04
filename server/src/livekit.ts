@@ -49,6 +49,7 @@ export type TurnMode = "vad" | "manual" | "keyword";
 export type KeywordConfig = {
   start: string;
   end: string;
+  matchThreshold: number;
 };
 
 export async function dispatchVoiceAgent(opts: {

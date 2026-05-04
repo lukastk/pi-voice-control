@@ -37,6 +37,7 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
   const [turnMode, setTurnMode] = useState<"vad" | "manual" | "keyword">("vad");
   const [keywordStart, setKeywordStart] = useState("Pi, come in");
   const [keywordEnd, setKeywordEnd] = useState("Pi, that's all");
+  const [keywordThreshold, setKeywordThreshold] = useState(0.75);
 
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -95,6 +96,7 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
     setTurnMode(config.voice.turnMode);
     setKeywordStart(config.voice.keywords.start);
     setKeywordEnd(config.voice.keywords.end);
+    setKeywordThreshold(config.voice.keywords.matchThreshold);
   }, [config]);
 
   // Did the user change any setting that only takes effect on next dispatch?
@@ -111,9 +113,10 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
       ttsVoice !== config.voice.tts.voiceId ||
       turnMode !== config.voice.turnMode ||
       keywordStart !== config.voice.keywords.start ||
-      keywordEnd !== config.voice.keywords.end
+      keywordEnd !== config.voice.keywords.end ||
+      keywordThreshold !== config.voice.keywords.matchThreshold
     );
-  }, [config, sttProvider, sttModel, sttLanguage, ttsProvider, ttsModel, ttsVoice, turnMode, keywordStart, keywordEnd]);
+  }, [config, sttProvider, sttModel, sttLanguage, ttsProvider, ttsModel, ttsVoice, turnMode, keywordStart, keywordEnd, keywordThreshold]);
 
   async function save(): Promise<boolean> {
     setError(null);
@@ -147,6 +150,7 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
           keywords: {
             start: keywordStart.trim() || "Pi, come in",
             end: keywordEnd.trim() || "Pi, that's all",
+            matchThreshold: keywordThreshold,
           },
         },
       });
@@ -404,6 +408,24 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
               <p style={hintStyle}>
                 Spoken after the message to send it. Both phrases are stripped from the
                 transcript before reaching Pi.
+              </p>
+            </Field>
+            <Field label={`Match threshold: ${keywordThreshold.toFixed(2)}`}>
+              <input
+                type="range"
+                min={0.5}
+                max={1}
+                step={0.05}
+                value={keywordThreshold}
+                onChange={(e) => setKeywordThreshold(parseFloat(e.target.value))}
+                style={{ width: "100%" }}
+              />
+              <p style={hintStyle}>
+                How close the spoken transcript has to be to the phrase, on a scale of
+                0.5 (very loose) to 1.0 (exact). Token-level similarity using
+                Levenshtein distance — at 0.75, "high come in" still matches "Pi come
+                in"; at 0.9 it doesn't. Lower the threshold if your STT keeps
+                mishearing the wake phrase; raise it if random speech triggers it.
               </p>
             </Field>
           </>
