@@ -111,7 +111,7 @@ export function playEarcon(
     session.say(emptyText, {
       audio: audioStream,
       addToChatCtx: false,
-      allowInterruptions: false,
+      allowInterruptions: true,
     });
   } catch (err) {
     // Best-effort: don't fail the agent turn if earcon playback fails.
