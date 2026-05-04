@@ -44,6 +44,13 @@ export type TtsConfig = {
   voiceId: string;
 };
 
+export type TurnMode = "vad" | "manual" | "keyword";
+
+export type KeywordConfig = {
+  start: string;
+  end: string;
+};
+
 export async function dispatchVoiceAgent(opts: {
   socketPath: string;
   appendSystemPrompt?: string;
@@ -51,6 +58,8 @@ export async function dispatchVoiceAgent(opts: {
   earcons?: EarconConfig;
   stt?: SttConfig;
   tts?: TtsConfig;
+  turnMode?: TurnMode;
+  keywords?: KeywordConfig;
 }): Promise<DispatchResult> {
   const roomName = `voice-${cryptoRandomShort()}`;
   const identity = opts.identity ?? "user";
@@ -62,6 +71,8 @@ export async function dispatchVoiceAgent(opts: {
       earcons: opts.earcons,
       stt: opts.stt,
       tts: opts.tts,
+      turnMode: opts.turnMode,
+      keywords: opts.keywords,
     }),
   });
 

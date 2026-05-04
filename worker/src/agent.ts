@@ -79,12 +79,21 @@ type TtsConfig = {
   voiceId: string;
 };
 
+type TurnMode = "vad" | "manual" | "keyword";
+
+type KeywordConfig = {
+  start: string;
+  end: string;
+};
+
 type JobMetadata = {
   socketPath: string;
   appendSystemPrompt?: string; // overrides default if provided
   earcons?: EarconConfig;
   stt?: SttConfig;
   tts?: TtsConfig;
+  turnMode?: TurnMode;
+  keywords?: KeywordConfig;
 };
 
 const DEFAULT_EARCONS: EarconConfig = {
@@ -96,6 +105,53 @@ const DEFAULT_EARCONS: EarconConfig = {
 };
 
 let activeEarcons: EarconConfig = DEFAULT_EARCONS;
+
+const DEFAULT_KEYWORDS: KeywordConfig = {
+  start: "Pi, come in",
+  end: "Pi, that's all",
+};
+
+let activeTurnMode: TurnMode = "vad";
+let activeKeywords: KeywordConfig = DEFAULT_KEYWORDS;
+
+/** Case-insensitive substring match, ignoring punctuation differences
+ *  ("pi, come in" / "Pi come in" / "pi  come  in" all match). Returns
+ *  the [start, end) char index range of the first match, or null. */
+function findKeyword(transcript: string, keyword: string): [number, number] | null {
+  if (!keyword.trim()) return null;
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+  const T = transcript.toLowerCase();
+  const Tnorm = norm(transcript);
+  const Knorm = norm(keyword);
+  if (!Knorm) return null;
+  const idx = Tnorm.indexOf(Knorm);
+  if (idx === -1) return null;
+  // Map normalized index back into the original transcript by walking
+  // through and accumulating character count from non-stripped chars.
+  // For our purposes a coarse range is fine; we strip via regex below.
+  // Use a regex on the lowercased original instead to get accurate bounds.
+  // Build a tolerant regex from the keyword: each non-space char is literal,
+  // runs of spaces match \s+, and punctuation between words is allowed.
+  const escaped = Knorm.split(/\s+/).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const pattern = new RegExp(escaped.join("[\\s\\W]+"), "i");
+  const m = pattern.exec(transcript);
+  if (!m) {
+    // Fallback: use the lowercased substring offset against original.
+    const start = T.indexOf(Knorm);
+    if (start === -1) return null;
+    return [start, start + Knorm.length];
+  }
+  return [m.index, m.index + m[0].length];
+}
+
+function stripKeywords(text: string): string {
+  let out = text;
+  for (const k of [activeKeywords.start, activeKeywords.end]) {
+    const range = findKeyword(out, k);
+    if (range) out = (out.slice(0, range[0]) + " " + out.slice(range[1])).trim();
+  }
+  return out.replace(/\s+/g, " ").replace(/^[\s,.;:!?]+|[\s,.;:!?]+$/g, "").trim();
+}
 
 function shouldPlay(kind: "over" | "copy" | "out"): boolean {
   if (!activeEarcons.enabled) return false;
@@ -230,6 +286,18 @@ class VoiceBridgeAgent extends voice.Agent {
       }
     }
 
+    // In keyword mode the transcript still contains the start/end phrases
+    // (the framework's STT layer captures everything between mic-open and
+    // commitUserTurn). Strip them before forwarding to Pi so it doesn't
+    // see "Pi, come in what's the weather Pi, that's all" as the message.
+    if (activeTurnMode === "keyword") {
+      const cleaned = stripKeywords(userText);
+      if (cleaned !== userText) {
+        diagLog("keyword strip", { before: userText, after: cleaned });
+        userText = cleaned;
+      }
+    }
+
     if (!userText) return null;
 
     const pi = this.#pi;
@@ -336,11 +404,19 @@ export default defineAgent({
     const meta = parseMetadata(ctx.job.metadata);
     activeEarcons = { ...DEFAULT_EARCONS, ...(meta.earcons ?? {}) };
     setEarconVolume(activeEarcons.volume);
+    activeTurnMode = meta.turnMode ?? "vad";
+    activeKeywords = { ...DEFAULT_KEYWORDS, ...(meta.keywords ?? {}) };
     logger.info(
-      { socketPath: meta.socketPath, earcons: activeEarcons },
+      { socketPath: meta.socketPath, earcons: activeEarcons, turnMode: activeTurnMode, keywords: activeKeywords },
       "[worker] entry",
     );
-    diagLog("=== session entry ===", { socketPath: meta.socketPath, earcons: activeEarcons, jobId: ctx.job.id });
+    diagLog("=== session entry ===", {
+      socketPath: meta.socketPath,
+      earcons: activeEarcons,
+      turnMode: activeTurnMode,
+      keywords: activeTurnMode === "keyword" ? activeKeywords : undefined,
+      jobId: ctx.job.id,
+    });
 
     await ctx.connect();
     logger.info("[worker] connected to LiveKit room");
@@ -432,8 +508,21 @@ export default defineAgent({
         interruption: {
           resumeFalseInterruption: false,
         },
+        // In keyword (and manual) mode, disable framework auto-EOU so we
+        // commit user turns explicitly via session.commitUserTurn() —
+        // either when the end keyword is spotted in the transcript stream
+        // (keyword mode), or when the client sends an explicit signal
+        // (manual mode, when wired up). With turnDetection undefined the
+        // framework uses VAD/STT auto detection, which is what we want
+        // for the default "vad" mode.
+        turnDetection: activeTurnMode === "vad" ? undefined : "manual",
       },
     });
+
+    // Keyword-mode state. The framework still runs STT in manual mode and
+    // emits UserInputTranscribed (interim + final) — we just have to scan
+    // those for the start/end phrases ourselves and call commitUserTurn().
+    let keywordArmed = false;
 
     session.on(voice.AgentSessionEventTypes.UserInputTranscribed, (ev) => {
       logger.info({ transcript: ev.transcript }, "[worker] user");
@@ -442,8 +531,31 @@ export default defineAgent({
         (ev as { isFinal?: boolean }).isFinal ??
         true;
       diagLog("user transcript", { transcript: ev.transcript, final });
-      if (!final) return;
-      if (shouldPlay("over")) playEarcon(session, "over");
+
+      if (activeTurnMode === "keyword") {
+        const transcript = ev.transcript ?? "";
+        // Scan partials too — Deepgram emits ~150ms partials and we want
+        // to react to keywords as soon as they're recognized rather than
+        // waiting for the STT final.
+        if (!keywordArmed && findKeyword(transcript, activeKeywords.start)) {
+          keywordArmed = true;
+          diagLog("keyword armed", { startKeyword: activeKeywords.start });
+          if (shouldPlay("copy")) playEarcon(session, "copy");
+        }
+        if (keywordArmed && findKeyword(transcript, activeKeywords.end)) {
+          keywordArmed = false;
+          diagLog("keyword end → commitUserTurn", { endKeyword: activeKeywords.end });
+          if (shouldPlay("over")) playEarcon(session, "over");
+          try {
+            session.commitUserTurn();
+          } catch (err) {
+            logger.warn({ err }, "[worker] commitUserTurn failed");
+          }
+        }
+        return; // skip the VAD-mode over earcon below
+      }
+
+      if (final && shouldPlay("over")) playEarcon(session, "over");
     });
 
     // Lifecycle traces for /tmp/voice-bridge-worker.log.

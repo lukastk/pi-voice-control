@@ -34,7 +34,9 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
   const [ttsProvider, setTtsProvider] = useState<"elevenlabs" | "openai" | "cartesia">("elevenlabs");
   const [ttsModel, setTtsModel] = useState("eleven_flash_v2_5");
   const [ttsVoice, setTtsVoice] = useState("CwhRBWXzGAHq8TQ4Fs17");
-  const [turnMode, setTurnMode] = useState<"vad" | "manual">("vad");
+  const [turnMode, setTurnMode] = useState<"vad" | "manual" | "keyword">("vad");
+  const [keywordStart, setKeywordStart] = useState("Pi, come in");
+  const [keywordEnd, setKeywordEnd] = useState("Pi, that's all");
 
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -91,6 +93,8 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
     setTtsModel(config.voice.tts.model);
     setTtsVoice(config.voice.tts.voiceId);
     setTurnMode(config.voice.turnMode);
+    setKeywordStart(config.voice.keywords.start);
+    setKeywordEnd(config.voice.keywords.end);
   }, [config]);
 
   // Did the user change any setting that only takes effect on next dispatch?
@@ -105,9 +109,11 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
       ttsProvider !== config.voice.tts.provider ||
       ttsModel !== config.voice.tts.model ||
       ttsVoice !== config.voice.tts.voiceId ||
-      turnMode !== config.voice.turnMode
+      turnMode !== config.voice.turnMode ||
+      keywordStart !== config.voice.keywords.start ||
+      keywordEnd !== config.voice.keywords.end
     );
-  }, [config, sttProvider, sttModel, sttLanguage, ttsProvider, ttsModel, ttsVoice, turnMode]);
+  }, [config, sttProvider, sttModel, sttLanguage, ttsProvider, ttsModel, ttsVoice, turnMode, keywordStart, keywordEnd]);
 
   async function save(): Promise<boolean> {
     setError(null);
@@ -138,6 +144,10 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
             voiceId: ttsVoice || TTS_DEFAULT_VOICE[ttsProvider],
           },
           turnMode,
+          keywords: {
+            start: keywordStart.trim() || "Pi, come in",
+            end: keywordEnd.trim() || "Pi, that's all",
+          },
         },
       });
       setSavedAt(Date.now());
@@ -356,17 +366,48 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
         <Field label="Mode">
           <select
             value={turnMode}
-            onChange={(e) => setTurnMode(e.target.value as "vad" | "manual")}
+            onChange={(e) => setTurnMode(e.target.value as "vad" | "manual" | "keyword")}
             style={inputStyle}
           >
             <option value="vad">Automatic (VAD detects when you stop speaking)</option>
             <option value="manual">Manual (push-to-talk: tap a button to start/stop)</option>
+            <option value="keyword">Keyword (speak a phrase to start and end each turn)</option>
           </select>
           <p style={hintStyle}>
-            You can also flip this on the fly via the <code>VAD</code>/<code>PTT</code> badge in the top bar.
-            Switching mid-session adjusts your mic immediately; STT/TTS provider changes need a reconnect.
+            You can also flip between VAD and PTT on the fly via the <code>VAD</code>/<code>PTT</code> badge in the top bar.
+            Switching to or from keyword mode requires a reconnect, since it changes how the agent listens.
           </p>
         </Field>
+        {turnMode === "keyword" && (
+          <>
+            <Field label="Start phrase">
+              <input
+                type="text"
+                value={keywordStart}
+                onChange={(e) => setKeywordStart(e.target.value)}
+                placeholder="Pi, come in"
+                style={inputStyle}
+              />
+              <p style={hintStyle}>
+                Spoken before each message to begin recording. Match is case-insensitive
+                and tolerant of punctuation.
+              </p>
+            </Field>
+            <Field label="End phrase">
+              <input
+                type="text"
+                value={keywordEnd}
+                onChange={(e) => setKeywordEnd(e.target.value)}
+                placeholder="Pi, that's all"
+                style={inputStyle}
+              />
+              <p style={hintStyle}>
+                Spoken after the message to send it. Both phrases are stripped from the
+                transcript before reaching Pi.
+              </p>
+            </Field>
+          </>
+        )}
       </Section>
 
       <Section title="Earcons (radio etiquette tones)">

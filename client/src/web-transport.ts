@@ -28,7 +28,7 @@ export class WebTransport extends VoiceEventEmitter implements VoiceTransport {
     turnMode,
   }: {
     dispatch: DispatchResult;
-    turnMode: "vad" | "manual";
+    turnMode: "vad" | "manual" | "keyword";
   }): Promise<void> {
     // Secure-context preflight: getUserMedia is blocked on http:// from
     // any non-localhost host. Without this, the browser throws an opaque

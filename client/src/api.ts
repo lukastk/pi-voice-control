@@ -34,7 +34,11 @@ export type Config = {
       model: string;
       voiceId: string;
     };
-    turnMode: "vad" | "manual";
+    turnMode: "vad" | "manual" | "keyword";
+    keywords: {
+      start: string;
+      end: string;
+    };
   };
 };
 

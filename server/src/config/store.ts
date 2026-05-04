@@ -44,7 +44,14 @@ export type Config = {
       model: string;       // elevenlabs: "eleven_flash_v2_5"; openai: "tts-1"/"gpt-4o-mini-tts"; cartesia: "sonic-3"
       voiceId: string;     // provider-specific voice id
     };
-    turnMode: "vad" | "manual";
+    turnMode: "vad" | "manual" | "keyword";
+    keywords: {
+      // Spoken phrases that bracket each user turn in keyword mode.
+      // Matched case-insensitively against STT partial+final transcripts.
+      // Stripped from the message before it's sent to Pi.
+      start: string;
+      end: string;
+    };
   };
 };
 
@@ -83,6 +90,10 @@ export const DEFAULTS: Config = {
       voiceId: "CwhRBWXzGAHq8TQ4Fs17",
     },
     turnMode: "vad",
+    keywords: {
+      start: "Pi, come in",
+      end: "Pi, that's all",
+    },
   },
 };
 

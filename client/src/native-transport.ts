@@ -55,7 +55,7 @@ export class NativeTransport extends VoiceEventEmitter implements VoiceTransport
     turnMode,
   }: {
     dispatch: DispatchResult;
-    turnMode: "vad" | "manual";
+    turnMode: "vad" | "manual" | "keyword";
   }): Promise<void> {
     const bridge = window.AndroidVoiceBridge;
     if (!bridge) {

@@ -22,8 +22,8 @@ export type VoiceState =
   | { kind: "error"; socketPath: string; message: string };
 
 type ConnectOptions = {
-  /** "manual" mode starts with mic muted; "vad" lets it stay open. */
-  turnMode: "vad" | "manual";
+  /** "manual" mode starts with mic muted; "vad" and "keyword" leave it open. */
+  turnMode: "vad" | "manual" | "keyword";
 };
 
 /**

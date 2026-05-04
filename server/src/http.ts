@@ -116,6 +116,8 @@ export function mountApi(app: Hono) {
         earcons: cfg.voice.earcons,
         stt: cfg.voice.stt,
         tts: cfg.voice.tts,
+        turnMode: cfg.voice.turnMode,
+        keywords: cfg.voice.keywords,
       });
       setCurrentTarget({
         socketPath,

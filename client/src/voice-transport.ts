@@ -31,7 +31,7 @@ export type VoiceEventHandler<E extends VoiceEvent["type"]> = (
 export interface VoiceTransport {
   connect(args: {
     dispatch: DispatchResult;
-    turnMode: "vad" | "manual";
+    turnMode: "vad" | "manual" | "keyword";
   }): Promise<void>;
   disconnect(): Promise<void>;
   setMicMuted(muted: boolean): Promise<void>;
