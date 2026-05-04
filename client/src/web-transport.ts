@@ -6,6 +6,7 @@
  * audio path doesn't survive screen-off (see PLAN-NATIVE-AUDIO.md §2).
  */
 import {
+  DisconnectReason,
   Room,
   RoomEvent,
   Track,
@@ -74,7 +75,16 @@ export class WebTransport extends VoiceEventEmitter implements VoiceTransport {
 
     room
       .on(RoomEvent.Disconnected, (reason) => {
-        this.emit({ type: "disconnected", reason: String(reason ?? "unknown") });
+        // CLIENT_INITIATED (= 1) means the SDK fired Disconnected because
+        // we called room.disconnect() ourselves — e.g. during a mode-toggle
+        // reconnect. Surface that as reason="user" so the voice.ts toast
+        // suppression skips the "Voice link dropped" warning. Anything
+        // else (server kick, network loss, etc.) keeps the original reason.
+        const userInitiated = reason === DisconnectReason.CLIENT_INITIATED;
+        this.emit({
+          type: "disconnected",
+          reason: userInitiated ? "user" : String(reason ?? "unknown"),
+        });
       })
       .on(RoomEvent.Reconnecting, () => {
         this.emit({ type: "reconnecting" });
