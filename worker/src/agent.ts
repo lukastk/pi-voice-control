@@ -41,33 +41,6 @@ export function diagLog(msg: string, fields?: Record<string, unknown>) {
   }
 }
 
-// Mirror the framework's pino output (and anything else that writes to
-// stdout/stderr in this subprocess) to the diag file. The subprocess's
-// real stdout/stderr are pipes the parent never reads, so without this we
-// lose all framework warnings ("skipping user input...", "speech scheduling
-// is paused", etc.). Install before any framework code runs.
-function tapStdio() {
-  for (const fd of ["stdout", "stderr"] as const) {
-    const stream = process[fd];
-    const orig = stream.write.bind(stream);
-    stream.write = ((chunk: any, ...args: any[]) => {
-      try {
-        const text =
-          typeof chunk === "string"
-            ? chunk
-            : Buffer.isBuffer(chunk)
-              ? chunk.toString("utf8")
-              : String(chunk);
-        fs.appendFileSync(DIAG_LOG_PATH, text);
-      } catch {
-        // never break the underlying write
-      }
-      return orig(chunk, ...args);
-    }) as typeof stream.write;
-  }
-}
-tapStdio();
-
 import {
   PiSocket,
   SteeredError,
@@ -462,53 +435,6 @@ export default defineAgent({
       },
     });
 
-    // Track when the latest final transcript fired so the watchdog can tell
-    // whether a generate_reply was scheduled in response.
-    let lastFinalTranscriptAt = 0;
-    let lastFinalTranscriptText = "";
-    session.on(voice.AgentSessionEventTypes.SpeechCreated, (ev: any) => {
-      // Reset the watchdog as soon as the framework schedules a reply.
-      if (ev?.source === "generate_reply") lastFinalTranscriptAt = 0;
-    });
-
-    function snapshotInternals(): Record<string, unknown> {
-      try {
-        const sAny = session as any;
-        const activity = sAny._activity ?? sAny.activity ?? sAny._currentActivity;
-        const cs = activity?._currentSpeech;
-        const ps = activity?.pausedSpeech;
-        return {
-          agentState: sAny._agentState ?? sAny.agentState,
-          schedulingPaused: activity?._schedulingPaused ?? activity?.schedulingPaused,
-          authorizationPaused: activity?._authorizationPaused,
-          currentSpeech: cs
-            ? {
-                id: cs.id,
-                interrupted: cs.interrupted,
-                done: cs.done?.(),
-                allowInterruptions: cs.allowInterruptions,
-                hasGenerations: cs._hasGenerations,
-              }
-            : null,
-          pausedSpeech: ps
-            ? {
-                handleId: ps.handle?.id,
-                handleInterrupted: ps.handle?.interrupted,
-                handleDone: ps.handle?.done?.(),
-                hasGenerations: ps.handle?._hasGenerations,
-                timeout: ps.timeout,
-                agentState: ps.agentState,
-              }
-            : null,
-          cancelSpeechPauseTaskPending: !!activity?.cancelSpeechPauseTask,
-          userTurnCompletedTaskDone: activity?._userTurnCompletedTask?.done,
-          speechQueueSize: activity?.speechQueue?.size?.(),
-        };
-      } catch (e) {
-        return { error: String(e) };
-      }
-    }
-
     session.on(voice.AgentSessionEventTypes.UserInputTranscribed, (ev) => {
       logger.info({ transcript: ev.transcript }, "[worker] user");
       const final =
@@ -517,69 +443,32 @@ export default defineAgent({
         true;
       diagLog("user transcript", { transcript: ev.transcript, final });
       if (!final) return;
-
-      // Watchdog: every previous final transcript got a generate_reply
-      // within ~5ms. If 1s passes with none, dump framework internals so
-      // we can see why userTurnCompleted never reached generateReply.
-      lastFinalTranscriptAt = Date.now();
-      lastFinalTranscriptText = ev.transcript;
-      const myStamp = lastFinalTranscriptAt;
-      setTimeout(() => {
-        if (lastFinalTranscriptAt !== myStamp) return; // a generate_reply (or newer transcript) reset it
-        diagLog("WATCHDOG: no generate_reply 1s after final transcript", {
-          transcript: lastFinalTranscriptText,
-          internals: snapshotInternals(),
-        });
-      }, 1000);
-
       if (shouldPlay("over")) playEarcon(session, "over");
     });
 
-    // Diagnostic logging for the sticky-TTS bug. AgentState transitions
-    // tell us whether pipelineReply ever reaches "speaking"; SpeechCreated
-    // / done callbacks let us follow each handle through the queue and spot
-    // ones that never finish (the prime suspect for stuck _currentSpeech).
+    // Lifecycle traces for /tmp/voice-bridge-worker.log.
     session.on(voice.AgentSessionEventTypes.AgentStateChanged, (ev: any) => {
-      logger.info({ from: ev.oldState, to: ev.newState }, "[worker] agent state");
       diagLog("agent state", { from: ev.oldState, to: ev.newState });
     });
 
     session.on(voice.AgentSessionEventTypes.SpeechCreated, (ev: any) => {
-      const handle = ev.speechHandle as
-        | { id: string; allowInterruptions: boolean; interrupted: boolean; done(): boolean; addDoneCallback(cb: (sh: any) => void): void }
-        | undefined;
+      const handle = ev.speechHandle;
       if (!handle) return;
-      const id = handle.id;
-      const source = ev.source;
-      const allowInt = handle.allowInterruptions;
       const startedAt = Date.now();
-      diagLog("speech created", { id, source, allowInterruptions: allowInt, userInitiated: ev.userInitiated });
-
-      handle.addDoneCallback((sh) => {
+      diagLog("speech created", {
+        id: handle.id,
+        source: ev.source,
+        allowInterruptions: handle.allowInterruptions,
+        userInitiated: ev.userInitiated,
+      });
+      handle.addDoneCallback?.((sh: any) => {
         diagLog("speech done", {
           id: sh.id,
-          source,
+          source: ev.source,
           elapsedMs: Date.now() - startedAt,
           interrupted: sh.interrupted,
         });
       });
-
-      // Watchdog: an earcon should finish in <500ms; a pipelineReply much
-      // sooner than 15s of pure silence. If a handle is still not done by
-      // the deadline, log loudly so we can see which one is wedged.
-      const deadlineMs = source === "say" ? 5000 : 30000;
-      setTimeout(() => {
-        if (!handle.done()) {
-          diagLog("STUCK speech handle — not done after deadline", {
-            id,
-            source,
-            allowInterruptions: allowInt,
-            interrupted: handle.interrupted,
-            elapsedMs: Date.now() - startedAt,
-            deadlineMs,
-          });
-        }
-      }, deadlineMs);
     });
 
     // Surface STT/TTS/LLM errors from the AgentSession back to the browser
