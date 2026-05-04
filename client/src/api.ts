@@ -35,7 +35,10 @@ export type Config = {
       voiceId: string;
     };
     turnMode: "vad" | "manual" | "keyword";
-    keywords: {
+    /** Optional in the type so a stale server (pre-keywords schema)
+     *  doesn't make the whole config undefined. The new server always
+     *  sends it via mergeDefaults; the SettingsTab handles absence. */
+    keywords?: {
       start: string;
       end: string;
       matchThreshold: number;

@@ -56,15 +56,21 @@ export function App() {
   const turnMode = server.config?.voice.turnMode ?? "vad";
   async function toggleTurnMode() {
     if (!server.config) return;
-    // Keyword mode is locked at session-start (it changes the framework's
-    // turnDetection setting), so the quick-toggle only flips between
-    // VAD and PTT. Switching to/from keyword mode happens in Settings.
-    if (turnMode === "keyword") return;
-    const next: "vad" | "manual" = turnMode === "vad" ? "manual" : "vad";
+    // Cycle VAD → PTT → KW → VAD. Switching between VAD and PTT is
+    // free (just adjusts mic mute). Switching to or from KW changes
+    // the framework's turnDetection (locked at session-start), so we
+    // also disconnect/reconnect the live session.
+    const cycle: Array<"vad" | "manual" | "keyword"> = ["vad", "manual", "keyword"];
+    const next = cycle[(cycle.indexOf(turnMode) + 1) % cycle.length]!;
+    const crossesKeywordBoundary = turnMode === "keyword" || next === "keyword";
     try {
       await api.putConfig({ voice: { turnMode: next } });
       if (voice.state.kind === "connected") {
-        await voice.setMicMutedExplicit(next === "manual");
+        if (crossesKeywordBoundary) {
+          await reconnectVoice();
+        } else {
+          await voice.setMicMutedExplicit(next === "manual");
+        }
       }
     } catch (err: any) {
       console.error("[turn-mode] toggle failed:", err);
@@ -134,13 +140,12 @@ export function App() {
         <button
           className={`mode-btn mode-${turnMode}`}
           onClick={toggleTurnMode}
-          disabled={turnMode === "keyword"}
           title={
             turnMode === "vad"
-              ? "Auto-detect end of speech via VAD. Click to switch to push-to-talk."
+              ? "VAD: auto-detect end of speech. Click to switch to push-to-talk."
               : turnMode === "manual"
-                ? "Push-to-talk: mic stays muted until you tap Talk. Click to switch to VAD."
-                : "Keyword mode — change in Settings (requires reconnect)."
+                ? "PTT: mic stays muted until you tap Talk. Click to switch to keyword mode."
+                : "Keyword: speak start/end phrases to bracket each turn. Click to switch back to VAD (will reconnect)."
           }
         >
           {turnMode === "vad" ? "VAD" : turnMode === "manual" ? "PTT" : "KW"}

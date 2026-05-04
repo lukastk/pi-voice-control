@@ -94,9 +94,12 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
     setTtsModel(config.voice.tts.model);
     setTtsVoice(config.voice.tts.voiceId);
     setTurnMode(config.voice.turnMode);
-    setKeywordStart(config.voice.keywords.start);
-    setKeywordEnd(config.voice.keywords.end);
-    setKeywordThreshold(config.voice.keywords.matchThreshold);
+    // Defensive: an older server may not be sending the keywords block
+    // yet (config schema added it). Fall back to the same defaults the
+    // server's DEFAULTS uses so the form renders rather than crashing.
+    setKeywordStart(config.voice.keywords?.start ?? "Pi, come in");
+    setKeywordEnd(config.voice.keywords?.end ?? "Pi, that's all");
+    setKeywordThreshold(config.voice.keywords?.matchThreshold ?? 0.75);
   }, [config]);
 
   // Did the user change any setting that only takes effect on next dispatch?
@@ -112,9 +115,9 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
       ttsModel !== config.voice.tts.model ||
       ttsVoice !== config.voice.tts.voiceId ||
       turnMode !== config.voice.turnMode ||
-      keywordStart !== config.voice.keywords.start ||
-      keywordEnd !== config.voice.keywords.end ||
-      keywordThreshold !== config.voice.keywords.matchThreshold
+      keywordStart !== (config.voice.keywords?.start ?? "Pi, come in") ||
+      keywordEnd !== (config.voice.keywords?.end ?? "Pi, that's all") ||
+      keywordThreshold !== (config.voice.keywords?.matchThreshold ?? 0.75)
     );
   }, [config, sttProvider, sttModel, sttLanguage, ttsProvider, ttsModel, ttsVoice, turnMode, keywordStart, keywordEnd, keywordThreshold]);
 
