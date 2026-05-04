@@ -109,7 +109,14 @@ PIDS+=($!)
 sleep 1.5
 
 echo -e "${GREEN}2.${NC} starting voice-bridge worker"
-(cd worker && bun run dev) &
+# Worker diagnostic log. The framework forks each job into a subprocess
+# whose stdout we can't capture from out here, so the worker also writes
+# its key events directly to this file via fs.appendFileSync (see diagLog
+# in worker/src/agent.ts). We tee the parent's stdout in append mode so
+# our two writers don't race.
+WORKER_LOG="/tmp/voice-bridge-worker.log"
+: >"$WORKER_LOG"
+(cd worker && bun run dev) > >(tee -a "$WORKER_LOG") 2>&1 &
 PIDS+=($!)
 
 PORT="${PORT:-7890}"
@@ -117,6 +124,7 @@ BIND="${BIND:-0.0.0.0}"
 echo -e "${GREEN}3.${NC} starting HTTP server on http://${BIND}:${PORT}"
 echo ""
 echo -e "  Web client:  http://localhost:${PORT}"
+echo -e "  Worker log:  ${WORKER_LOG}"
 echo -e "  LiveKit:     ${LIVEKIT_URL}"
 echo -e "  Pi sockets:  /tmp/pi-rpc-sockets/"
 echo ""

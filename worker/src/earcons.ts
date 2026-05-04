@@ -15,7 +15,19 @@
  * AcousticEchoCanceller treats them as remote audio (no false barge-in).
  */
 import { AudioFrame } from "@livekit/rtc-node";
-import type { voice } from "@livekit/agents";
+import { log, type voice } from "@livekit/agents";
+import * as fs from "node:fs";
+
+const DIAG_LOG_PATH = "/tmp/voice-bridge-worker.log";
+function diagLog(msg: string, fields?: Record<string, unknown>) {
+  try {
+    const line =
+      JSON.stringify({ ts: new Date().toISOString(), msg, ...(fields ?? {}) }) + "\n";
+    fs.appendFileSync(DIAG_LOG_PATH, line);
+  } catch {
+    // best-effort
+  }
+}
 
 const SAMPLE_RATE = 24000;
 const CHANNELS = 1;
@@ -107,14 +119,27 @@ export function playEarcon(
     },
   });
 
+  const logger = log();
+  const startedAt = Date.now();
+  logger.info({ kind }, "[earcon] play");
+  diagLog("earcon play", { kind });
   try {
-    session.say(emptyText, {
+    const handle = session.say(emptyText, {
       audio: audioStream,
       addToChatCtx: false,
       allowInterruptions: true,
     });
+    handle.addDoneCallback((sh) => {
+      diagLog("earcon done", {
+        kind,
+        id: sh.id,
+        elapsedMs: Date.now() - startedAt,
+        interrupted: sh.interrupted,
+      });
+    });
   } catch (err) {
     // Best-effort: don't fail the agent turn if earcon playback fails.
     console.error(`[earcon:${kind}] play failed:`, err);
+    diagLog("earcon play failed", { kind, error: String(err) });
   }
 }

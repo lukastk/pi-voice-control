@@ -22,6 +22,51 @@ import { TTS as CartesiaTTS } from "@livekit/agents-plugin-cartesia";
 import * as silero from "@livekit/agents-plugin-silero";
 import { fileURLToPath } from "node:url";
 import { ReadableStream as NodeReadableStream } from "node:stream/web";
+import * as fs from "node:fs";
+
+// Diagnostic log: framework forks the agent into a subprocess whose
+// stdout/stderr are piped to a parent that never reads them, so pino logs
+// disappear. Writing here is the only reliable way to inspect a session
+// after the fact. appendFileSync with O_APPEND is atomic for line-sized
+// writes on macOS/Linux, so the parent's tee and our subprocess writes
+// can coexist without interleaving.
+const DIAG_LOG_PATH = "/tmp/voice-bridge-worker.log";
+export function diagLog(msg: string, fields?: Record<string, unknown>) {
+  try {
+    const line =
+      JSON.stringify({ ts: new Date().toISOString(), msg, ...(fields ?? {}) }) + "\n";
+    fs.appendFileSync(DIAG_LOG_PATH, line);
+  } catch {
+    // best-effort; never let diagnostics fail the session
+  }
+}
+
+// Mirror the framework's pino output (and anything else that writes to
+// stdout/stderr in this subprocess) to the diag file. The subprocess's
+// real stdout/stderr are pipes the parent never reads, so without this we
+// lose all framework warnings ("skipping user input...", "speech scheduling
+// is paused", etc.). Install before any framework code runs.
+function tapStdio() {
+  for (const fd of ["stdout", "stderr"] as const) {
+    const stream = process[fd];
+    const orig = stream.write.bind(stream);
+    stream.write = ((chunk: any, ...args: any[]) => {
+      try {
+        const text =
+          typeof chunk === "string"
+            ? chunk
+            : Buffer.isBuffer(chunk)
+              ? chunk.toString("utf8")
+              : String(chunk);
+        fs.appendFileSync(DIAG_LOG_PATH, text);
+      } catch {
+        // never break the underlying write
+      }
+      return orig(chunk, ...args);
+    }) as typeof stream.write;
+  }
+}
+tapStdio();
 
 import {
   PiSocket,
@@ -135,24 +180,15 @@ class StubLLM extends llm.LLM {
  * stream lives only as long as one bounded utterance, the timeout never
  * has the chance to fire.
  *
- * llmNode therefore returns null after kicking off Pi (short-circuiting
- * the framework's LLM/TTS tasks at generation.js:334-337 and 454-460)
- * while dispatching `session.say()` from the Pi callbacks. Each spoken
- * tag is an independent SpeechHandle queued on the AgentSession's
- * mainTask.
+ * llmNode therefore returns null after awaiting Pi (short-circuiting the
+ * framework's LLM/TTS tasks at generation.js:334-337 and 454-460) while
+ * dispatching `session.say()` from the Pi callbacks. Each spoken tag is an
+ * independent SpeechHandle queued on the AgentSession's mainTask.
  *
- * Critical: pi.prompt is NOT awaited inside llmNode. The framework's
- * mainTask is blocked on _waitForGeneration of the pipelineReply
- * speechHandle while llmNode runs; awaiting Pi would mean every
- * scheduled session.say() handle queues but doesn't play until Pi's
- * full turn completes. Returning null immediately lets pipelineReply
- * finish in a few ms, freeing mainTask to drain the say-handles
- * progressively as Pi emits each spoken tag.
- *
- * Interruption: the framework auto-interrupts whichever say-handle is
- * the current speech. Queued say-handles for the abandoned Pi turn
- * need explicit cleanup via #interruptPendingSays() so they don't play
- * after the user has moved on.
+ * Interruption: the framework auto-interrupts whichever say-handle is the
+ * current speech. Queued say-handles for the abandoned Pi turn need
+ * explicit cleanup via #interruptPendingSays() so they don't play after
+ * the user has moved on.
  */
 class VoiceBridgeAgent extends voice.Agent {
   #pi: PiSocket;
@@ -178,12 +214,15 @@ class VoiceBridgeAgent extends voice.Agent {
     handle.addDoneCallback((sh) => {
       this.#pendingSays = this.#pendingSays.filter((h) => h !== sh);
     });
+    diagLog("scheduleSay", { id: handle.id, len: cleaned.length, preview: cleaned.slice(0, 60) });
   }
 
   /** Interrupt every queued/in-flight say-handle from the current Pi turn.
    * Called when the user barges in: the framework only interrupts the
    * current speech, not items still in the speech queue. */
   #interruptPendingSays(): void {
+    const count = this.#pendingSays.length;
+    if (count === 0) return;
     for (const h of this.#pendingSays) {
       if (!h.done() && !h.interrupted) {
         try {
@@ -195,6 +234,7 @@ class VoiceBridgeAgent extends voice.Agent {
       }
     }
     this.#pendingSays = [];
+    diagLog("interruptPendingSays", { count });
   }
 
   override async llmNode(
@@ -224,6 +264,7 @@ class VoiceBridgeAgent extends voice.Agent {
     const isInterruption = pi.isBusy;
 
     logger.info({ userText, isInterruption }, "[VoiceBridgeAgent] llmNode");
+    diagLog("llmNode start", { userText, isInterruption });
 
     if (isInterruption) {
       this.#interruptPendingSays();
@@ -266,6 +307,11 @@ class VoiceBridgeAgent extends voice.Agent {
           );
           this.#scheduleSay(fullText);
         }
+        diagLog("pi turn complete", {
+          deltaCount,
+          fullTextLen: fullText.length,
+          spokenCount,
+        });
         if (shouldPlay("out")) playEarcon(session, "out");
       },
     };
@@ -289,6 +335,7 @@ class VoiceBridgeAgent extends voice.Agent {
     pi.prompt(userText, callbacks, isInterruption).catch((err) => {
       if (err instanceof SteeredError) {
         logger.info("[VoiceBridgeAgent] pi turn steered (interrupted)");
+        diagLog("pi turn steered");
       } else if (err instanceof PiSessionEndedError) {
         logger.warn("[VoiceBridgeAgent] Pi session has ended");
         this.#scheduleSay(
@@ -296,6 +343,7 @@ class VoiceBridgeAgent extends voice.Agent {
         );
       } else {
         logger.error({ err }, "[VoiceBridgeAgent] pi error");
+        diagLog("pi error", { message: (err as Error)?.message });
         this.#scheduleSay("Sorry, I had trouble with that.");
       }
     });
@@ -319,6 +367,7 @@ export default defineAgent({
       { socketPath: meta.socketPath, earcons: activeEarcons },
       "[worker] entry",
     );
+    diagLog("=== session entry ===", { socketPath: meta.socketPath, earcons: activeEarcons, jobId: ctx.job.id });
 
     await ctx.connect();
     logger.info("[worker] connected to LiveKit room");
@@ -373,15 +422,124 @@ export default defineAgent({
       tts,
     });
 
+    // Track when the latest final transcript fired so the watchdog can tell
+    // whether a generate_reply was scheduled in response.
+    let lastFinalTranscriptAt = 0;
+    let lastFinalTranscriptText = "";
+    session.on(voice.AgentSessionEventTypes.SpeechCreated, (ev: any) => {
+      // Reset the watchdog as soon as the framework schedules a reply.
+      if (ev?.source === "generate_reply") lastFinalTranscriptAt = 0;
+    });
+
+    function snapshotInternals(): Record<string, unknown> {
+      try {
+        const sAny = session as any;
+        const activity = sAny._activity ?? sAny.activity ?? sAny._currentActivity;
+        const cs = activity?._currentSpeech;
+        const ps = activity?.pausedSpeech;
+        return {
+          agentState: sAny._agentState ?? sAny.agentState,
+          schedulingPaused: activity?._schedulingPaused ?? activity?.schedulingPaused,
+          authorizationPaused: activity?._authorizationPaused,
+          currentSpeech: cs
+            ? {
+                id: cs.id,
+                interrupted: cs.interrupted,
+                done: cs.done?.(),
+                allowInterruptions: cs.allowInterruptions,
+                hasGenerations: cs._hasGenerations,
+              }
+            : null,
+          pausedSpeech: ps
+            ? {
+                handleId: ps.handle?.id,
+                handleInterrupted: ps.handle?.interrupted,
+                handleDone: ps.handle?.done?.(),
+                hasGenerations: ps.handle?._hasGenerations,
+                timeout: ps.timeout,
+                agentState: ps.agentState,
+              }
+            : null,
+          cancelSpeechPauseTaskPending: !!activity?.cancelSpeechPauseTask,
+          userTurnCompletedTaskDone: activity?._userTurnCompletedTask?.done,
+          speechQueueSize: activity?.speechQueue?.size?.(),
+        };
+      } catch (e) {
+        return { error: String(e) };
+      }
+    }
+
     session.on(voice.AgentSessionEventTypes.UserInputTranscribed, (ev) => {
       logger.info({ transcript: ev.transcript }, "[worker] user");
-      // "Over" — fires on every transcription, but session.say queues so
-      // partial transcripts simply chain a tiny earcon each. Keep to final.
-      const isFinal =
+      const final =
         (ev as { final?: boolean }).final ??
         (ev as { isFinal?: boolean }).isFinal ??
         true;
-      if (isFinal && shouldPlay("over")) playEarcon(session, "over");
+      diagLog("user transcript", { transcript: ev.transcript, final });
+      if (!final) return;
+
+      // Watchdog: every previous final transcript got a generate_reply
+      // within ~5ms. If 1s passes with none, dump framework internals so
+      // we can see why userTurnCompleted never reached generateReply.
+      lastFinalTranscriptAt = Date.now();
+      lastFinalTranscriptText = ev.transcript;
+      const myStamp = lastFinalTranscriptAt;
+      setTimeout(() => {
+        if (lastFinalTranscriptAt !== myStamp) return; // a generate_reply (or newer transcript) reset it
+        diagLog("WATCHDOG: no generate_reply 1s after final transcript", {
+          transcript: lastFinalTranscriptText,
+          internals: snapshotInternals(),
+        });
+      }, 1000);
+
+      if (shouldPlay("over")) playEarcon(session, "over");
+    });
+
+    // Diagnostic logging for the sticky-TTS bug. AgentState transitions
+    // tell us whether pipelineReply ever reaches "speaking"; SpeechCreated
+    // / done callbacks let us follow each handle through the queue and spot
+    // ones that never finish (the prime suspect for stuck _currentSpeech).
+    session.on(voice.AgentSessionEventTypes.AgentStateChanged, (ev: any) => {
+      logger.info({ from: ev.oldState, to: ev.newState }, "[worker] agent state");
+      diagLog("agent state", { from: ev.oldState, to: ev.newState });
+    });
+
+    session.on(voice.AgentSessionEventTypes.SpeechCreated, (ev: any) => {
+      const handle = ev.speechHandle as
+        | { id: string; allowInterruptions: boolean; interrupted: boolean; done(): boolean; addDoneCallback(cb: (sh: any) => void): void }
+        | undefined;
+      if (!handle) return;
+      const id = handle.id;
+      const source = ev.source;
+      const allowInt = handle.allowInterruptions;
+      const startedAt = Date.now();
+      diagLog("speech created", { id, source, allowInterruptions: allowInt, userInitiated: ev.userInitiated });
+
+      handle.addDoneCallback((sh) => {
+        diagLog("speech done", {
+          id: sh.id,
+          source,
+          elapsedMs: Date.now() - startedAt,
+          interrupted: sh.interrupted,
+        });
+      });
+
+      // Watchdog: an earcon should finish in <500ms; a pipelineReply much
+      // sooner than 15s of pure silence. If a handle is still not done by
+      // the deadline, log loudly so we can see which one is wedged.
+      const deadlineMs = source === "say" ? 5000 : 30000;
+      setTimeout(() => {
+        if (!handle.done()) {
+          diagLog("STUCK speech handle — not done after deadline", {
+            id,
+            source,
+            allowInterruptions: allowInt,
+            interrupted: handle.interrupted,
+            elapsedMs: Date.now() - startedAt,
+            deadlineMs,
+          });
+        }
+      }, deadlineMs);
     });
 
     // Surface STT/TTS/LLM errors from the AgentSession back to the browser
@@ -400,6 +558,7 @@ export default defineAgent({
       // fall back to local VAD-based interruption.
       if (sourceLabel.includes("AdaptiveInterruption")) return;
       logger.warn({ source: sourceLabel, message }, "[worker] surfacing error to client");
+      diagLog("session error", { source: sourceLabel, message });
       try {
         const payload = new TextEncoder().encode(
           JSON.stringify({ kind: "error", source: sourceLabel, message }),
