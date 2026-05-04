@@ -49,6 +49,9 @@ export type TurnMode = "vad" | "manual" | "keyword";
 export type KeywordConfig = {
   start: string[];
   end: string[];
+  scrap: string[];
+  redo: string[];
+  replay: string[];
   matchThreshold: number;
 };
 

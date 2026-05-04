@@ -40,10 +40,18 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
   // the API boundary; the UI is simpler with a plain text field.
   const [keywordStart, setKeywordStart] = useState("Pi, come in");
   const [keywordEnd, setKeywordEnd] = useState("Pi, that's all");
+  const [keywordScrap, setKeywordScrap] = useState("Pi, scrap that");
+  const [keywordRedo, setKeywordRedo] = useState("Pi, do over");
+  const [keywordReplay, setKeywordReplay] = useState("Pi, say again");
   const [keywordThreshold, setKeywordThreshold] = useState(0.75);
 
   function splitKeywords(text: string): string[] {
     return text.split("\n").map((s) => s.trim()).filter(Boolean);
+  }
+  function arrayFromConfig(v: unknown, fallback: string[]): string[] {
+    if (Array.isArray(v)) return v;
+    if (typeof v === "string" && v.trim()) return [v];
+    return fallback;
   }
 
   const [savedAt, setSavedAt] = useState<number | null>(null);
@@ -107,10 +115,11 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
     // Server may also send legacy single-string format from a pre-array
     // schema; normalize to array first then join one per line.
     const k = config.voice.keywords;
-    const startArr = Array.isArray(k?.start) ? k!.start : k?.start ? [k.start as unknown as string] : ["Pi, come in"];
-    const endArr = Array.isArray(k?.end) ? k!.end : k?.end ? [k.end as unknown as string] : ["Pi, that's all"];
-    setKeywordStart(startArr.join("\n"));
-    setKeywordEnd(endArr.join("\n"));
+    setKeywordStart(arrayFromConfig(k?.start, ["Pi, come in"]).join("\n"));
+    setKeywordEnd(arrayFromConfig(k?.end, ["Pi, that's all"]).join("\n"));
+    setKeywordScrap(arrayFromConfig(k?.scrap, ["Pi, scrap that"]).join("\n"));
+    setKeywordRedo(arrayFromConfig(k?.redo, ["Pi, do over"]).join("\n"));
+    setKeywordReplay(arrayFromConfig(k?.replay, ["Pi, say again"]).join("\n"));
     setKeywordThreshold(k?.matchThreshold ?? 0.75);
   }, [config]);
 
@@ -127,11 +136,14 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
       ttsModel !== config.voice.tts.model ||
       ttsVoice !== config.voice.tts.voiceId ||
       turnMode !== config.voice.turnMode ||
-      JSON.stringify(splitKeywords(keywordStart)) !== JSON.stringify(config.voice.keywords?.start ?? ["Pi, come in"]) ||
-      JSON.stringify(splitKeywords(keywordEnd)) !== JSON.stringify(config.voice.keywords?.end ?? ["Pi, that's all"]) ||
+      JSON.stringify(splitKeywords(keywordStart)) !== JSON.stringify(arrayFromConfig(config.voice.keywords?.start, ["Pi, come in"])) ||
+      JSON.stringify(splitKeywords(keywordEnd)) !== JSON.stringify(arrayFromConfig(config.voice.keywords?.end, ["Pi, that's all"])) ||
+      JSON.stringify(splitKeywords(keywordScrap)) !== JSON.stringify(arrayFromConfig(config.voice.keywords?.scrap, ["Pi, scrap that"])) ||
+      JSON.stringify(splitKeywords(keywordRedo)) !== JSON.stringify(arrayFromConfig(config.voice.keywords?.redo, ["Pi, do over"])) ||
+      JSON.stringify(splitKeywords(keywordReplay)) !== JSON.stringify(arrayFromConfig(config.voice.keywords?.replay, ["Pi, say again"])) ||
       keywordThreshold !== (config.voice.keywords?.matchThreshold ?? 0.75)
     );
-  }, [config, sttProvider, sttModel, sttLanguage, ttsProvider, ttsModel, ttsVoice, turnMode, keywordStart, keywordEnd, keywordThreshold]);
+  }, [config, sttProvider, sttModel, sttLanguage, ttsProvider, ttsModel, ttsVoice, turnMode, keywordStart, keywordEnd, keywordScrap, keywordRedo, keywordReplay, keywordThreshold]);
 
   async function save(): Promise<boolean> {
     setError(null);
@@ -165,6 +177,9 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
           keywords: {
             start: splitKeywords(keywordStart).length > 0 ? splitKeywords(keywordStart) : ["Pi, come in"],
             end: splitKeywords(keywordEnd).length > 0 ? splitKeywords(keywordEnd) : ["Pi, that's all"],
+            scrap: splitKeywords(keywordScrap).length > 0 ? splitKeywords(keywordScrap) : ["Pi, scrap that"],
+            redo: splitKeywords(keywordRedo).length > 0 ? splitKeywords(keywordRedo) : ["Pi, do over"],
+            replay: splitKeywords(keywordReplay).length > 0 ? splitKeywords(keywordReplay) : ["Pi, say again"],
             matchThreshold: keywordThreshold,
           },
         },
@@ -429,6 +444,45 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
           <p style={hintStyle}>
             Spoken after the message to send it. Whichever phrase matched is stripped from the
             transcript before reaching Pi.
+          </p>
+        </Field>
+        <Field label="Scrap phrases">
+          <textarea
+            value={keywordScrap}
+            onChange={(e) => setKeywordScrap(e.target.value)}
+            placeholder="Pi, scrap that"
+            rows={2}
+            style={{ ...inputStyle, fontFamily: "ui-monospace, monospace", resize: "vertical" }}
+          />
+          <p style={hintStyle}>
+            Spoken mid-message to discard it and stop listening. Equivalent to closing
+            the mic without sending.
+          </p>
+        </Field>
+        <Field label="Redo phrases">
+          <textarea
+            value={keywordRedo}
+            onChange={(e) => setKeywordRedo(e.target.value)}
+            placeholder="Pi, do over"
+            rows={2}
+            style={{ ...inputStyle, fontFamily: "ui-monospace, monospace", resize: "vertical" }}
+          />
+          <p style={hintStyle}>
+            Spoken mid-message to discard it and start over from the beginning, as if
+            you'd just said the start phrase again.
+          </p>
+        </Field>
+        <Field label="Replay phrases">
+          <textarea
+            value={keywordReplay}
+            onChange={(e) => setKeywordReplay(e.target.value)}
+            placeholder="Pi, say again"
+            rows={2}
+            style={{ ...inputStyle, fontFamily: "ui-monospace, monospace", resize: "vertical" }}
+          />
+          <p style={hintStyle}>
+            Spoken between turns (when not currently composing a message) to re-speak
+            the agent's last response.
           </p>
         </Field>
         <Field label={`Match threshold: ${keywordThreshold.toFixed(2)}`}>

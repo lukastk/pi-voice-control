@@ -41,6 +41,9 @@ export type Config = {
     keywords?: {
       start: string[];
       end: string[];
+      scrap: string[];
+      redo: string[];
+      replay: string[];
       matchThreshold: number;
     };
   };

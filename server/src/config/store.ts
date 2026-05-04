@@ -46,13 +46,22 @@ export type Config = {
     };
     turnMode: "vad" | "manual" | "keyword";
     keywords: {
-      // Spoken phrases that bracket each user turn in keyword mode.
+      // Spoken phrases that drive each user turn in keyword mode.
       // Matched case-insensitively against STT partial+final transcripts.
-      // Stripped from the message before it's sent to Pi. Each side
-      // accepts multiple alternatives — the first one to match wins,
-      // useful for catching STT mishearings ("Pi" → "Pie" / "high").
+      // Each slot accepts multiple alternatives (first match wins) to
+      // catch STT mishearings. The matched phrase is stripped from any
+      // message that does reach Pi.
+      //
+      //   start  — begin a new message (sets armed state)
+      //   end    — commit the current message (sends to Pi)
+      //   scrap  — discard the current message, return to idle
+      //   redo   — discard the current message, restart armed
+      //   replay — re-speak the last agent response (only while idle)
       start: string[];
       end: string[];
+      scrap: string[];
+      redo: string[];
+      replay: string[];
       // Fuzzy-match similarity threshold in [0..1]. 1.0 = exact match;
       // ~0.75 lets common STT mishearings match (e.g. "high come in" ≈
       // "pi come in"). Lower = more permissive but more false triggers.
@@ -99,6 +108,9 @@ export const DEFAULTS: Config = {
     keywords: {
       start: ["Pi, come in"],
       end: ["Pi, that's all"],
+      scrap: ["Pi, scrap that"],
+      redo: ["Pi, do over"],
+      replay: ["Pi, say again"],
       matchThreshold: 0.75,
     },
   },
@@ -133,19 +145,27 @@ export function loadConfig(): Config {
   }
 }
 
-/** Coerce schema drift from older config files. Today: keywords.start
- *  / keywords.end were single strings; now they're string arrays.
- *  Wrap a leftover string into a single-element array. */
+/** Coerce schema drift from older config files. keywords slots were
+ *  added incrementally (start/end → +scrap/redo/replay) and started as
+ *  single strings before becoming arrays. Wrap leftover strings, fill
+ *  missing slots from defaults, drop empty entries. */
 function normalize(cfg: Config): Config {
-  const k = cfg.voice.keywords as { start: unknown; end: unknown; matchThreshold: number };
-  if (typeof k.start === "string") k.start = [k.start];
-  if (typeof k.end === "string") k.end = [k.end];
-  if (!Array.isArray(k.start)) k.start = [...DEFAULTS.voice.keywords.start];
-  if (!Array.isArray(k.end)) k.end = [...DEFAULTS.voice.keywords.end];
-  k.start = (k.start as string[]).map((s) => String(s).trim()).filter(Boolean);
-  k.end = (k.end as string[]).map((s) => String(s).trim()).filter(Boolean);
-  if ((k.start as string[]).length === 0) k.start = [...DEFAULTS.voice.keywords.start];
-  if ((k.end as string[]).length === 0) k.end = [...DEFAULTS.voice.keywords.end];
+  const k = cfg.voice.keywords as Record<string, unknown>;
+  const slots: Array<keyof Config["voice"]["keywords"]> = [
+    "start",
+    "end",
+    "scrap",
+    "redo",
+    "replay",
+  ];
+  for (const slot of slots) {
+    let v = k[slot];
+    if (typeof v === "string") v = [v];
+    if (!Array.isArray(v)) v = [...(DEFAULTS.voice.keywords[slot] as string[])];
+    v = (v as unknown[]).map((s) => String(s).trim()).filter(Boolean);
+    if ((v as string[]).length === 0) v = [...(DEFAULTS.voice.keywords[slot] as string[])];
+    k[slot] = v;
+  }
   return cfg;
 }
 

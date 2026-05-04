@@ -84,6 +84,9 @@ type TurnMode = "vad" | "manual" | "keyword";
 type KeywordConfig = {
   start: string[];
   end: string[];
+  scrap: string[];
+  redo: string[];
+  replay: string[];
   matchThreshold: number;
 };
 
@@ -110,6 +113,9 @@ let activeEarcons: EarconConfig = DEFAULT_EARCONS;
 const DEFAULT_KEYWORDS: KeywordConfig = {
   start: ["Pi, come in"],
   end: ["Pi, that's all"],
+  scrap: ["Pi, scrap that"],
+  redo: ["Pi, do over"],
+  replay: ["Pi, say again"],
   matchThreshold: 0.75,
 };
 
@@ -233,7 +239,17 @@ function findAnyKeyword(
 
 function stripKeywords(text: string): string {
   let out = text;
-  for (const list of [activeKeywords.start, activeKeywords.end]) {
+  // Strip all five slots — a redo/scrap/replay phrase shouldn't reach
+  // Pi if it ended up in the committed transcript anyway (unlikely but
+  // defensive).
+  const slots = [
+    activeKeywords.start,
+    activeKeywords.end,
+    activeKeywords.scrap,
+    activeKeywords.redo,
+    activeKeywords.replay,
+  ];
+  for (const list of slots) {
     const m = findAnyKeyword(out, list, activeKeywords.matchThreshold);
     if (m) out = (out.slice(0, m.range[0]) + " " + out.slice(m.range[1])).trim();
   }
@@ -309,6 +325,14 @@ class StubLLM extends llm.LLM {
 class VoiceBridgeAgent extends voice.Agent {
   #pi: PiSocket;
   #pendingSays: SpeechHandle[] = [];
+  // Set true before commitUserTurn() when keyword-mode "scrap" / "redo"
+  // / "replay" fires, so the next llmNode invocation drops the turn
+  // instead of forwarding the (just-cleared) transcript to Pi. Single-
+  // shot — llmNode resets it on the way out.
+  #dropNextTurn = false;
+  // Spoken-tag content from the most recent completed Pi turn. Used by
+  // the keyword-mode "replay" command to re-speak the last response.
+  #lastResponseChunks: string[] = [];
 
   constructor(pi: PiSocket) {
     super({
@@ -318,6 +342,25 @@ class VoiceBridgeAgent extends voice.Agent {
       llm: new StubLLM(),
     });
     this.#pi = pi;
+  }
+
+  /** Schedule the previous turn's spoken chunks again. Used by the
+   *  keyword-mode "replay" command. No-op if there hasn't been a turn
+   *  yet (or the previous turn produced no spoken content). */
+  replayLastResponse(): boolean {
+    if (this.#lastResponseChunks.length === 0) return false;
+    diagLog("replay last response", { chunks: this.#lastResponseChunks.length });
+    for (const chunk of this.#lastResponseChunks) {
+      this.#scheduleSay(chunk);
+    }
+    return true;
+  }
+
+  /** Mark the next user turn for discard. The framework will still
+   *  call llmNode for the in-flight transcript, but llmNode short-
+   *  circuits and returns null without forwarding to Pi. */
+  markDropNext(): void {
+    this.#dropNextTurn = true;
   }
 
   /** Schedule a spoken utterance on the session, tracked so we can
@@ -359,6 +402,16 @@ class VoiceBridgeAgent extends voice.Agent {
     _modelSettings: voice.ModelSettings,
   ): Promise<NodeReadableStream<string | llm.ChatChunk> | null> {
     const logger = log();
+
+    // Single-shot drop flag set by the keyword-mode "scrap" / "redo" /
+    // "replay" handlers. The framework still ran a user turn (so its
+    // audioTranscript got reset cleanly), but we don't want to forward
+    // anything to Pi for it.
+    if (this.#dropNextTurn) {
+      this.#dropNextTurn = false;
+      diagLog("llmNode drop (keyword command)");
+      return null;
+    }
 
     let userText = "";
     for (let i = chatCtx.items.length - 1; i >= 0; i--) {
@@ -407,6 +460,12 @@ class VoiceBridgeAgent extends voice.Agent {
     let fullText = "";
     let spokenCount = 0;
     let deltaCount = 0;
+    // Accumulate this turn's spoken chunks (plus any fallback) so the
+    // keyword-mode "replay" command can re-speak them later. Only
+    // populated for cleanly-completed turns — interrupted turns
+    // intentionally leave #lastResponseChunks pointing at the previous
+    // intact response.
+    const turnChunks: string[] = [];
 
     const callbacks: PiCallbacks = {
       onTextDelta: (delta) => {
@@ -419,6 +478,7 @@ class VoiceBridgeAgent extends voice.Agent {
             "[VoiceBridgeAgent] <spoken> tag → say",
           );
           this.#scheduleSay(tag);
+          turnChunks.push(tag);
         }
       },
       onToolStart: (toolName) => {
@@ -434,7 +494,9 @@ class VoiceBridgeAgent extends voice.Agent {
             "[VoiceBridgeAgent] no <spoken> tags — falling back to cleaned full text",
           );
           this.#scheduleSay(fullText);
+          turnChunks.push(fullText);
         }
+        if (turnChunks.length > 0) this.#lastResponseChunks = turnChunks;
         diagLog("pi turn complete", {
           deltaCount,
           fullTextLen: fullText.length,
@@ -622,22 +684,65 @@ export default defineAgent({
       if (activeTurnMode === "keyword") {
         const transcript = ev.transcript ?? "";
         const threshold = activeKeywords.matchThreshold;
+
+        // Common helper: clear the framework's transcript buffer by
+        // committing the user turn while flagging the resulting llmNode
+        // call to drop the message instead of forwarding to Pi.
+        const commitAndDrop = (note: string, payload: Record<string, unknown>) => {
+          diagLog(note, payload);
+          agent.markDropNext();
+          try {
+            session.commitUserTurn();
+          } catch (err) {
+            logger.warn({ err }, "[worker] commitUserTurn failed");
+          }
+        };
+
         // Scan partials too — Deepgram emits ~150ms partials and we want
         // to react to keywords as soon as they're recognized rather than
-        // waiting for the STT final.
+        // waiting for the STT final. Order of checks within each branch
+        // matters: scrap/redo are recognized only while armed, replay
+        // only while idle, so they can't shadow each other.
         if (!keywordArmed) {
+          // Idle: replay last response, or arm for a new message.
+          const r = findAnyKeyword(transcript, activeKeywords.replay, threshold);
+          if (r) {
+            const replayed = agent.replayLastResponse();
+            commitAndDrop("keyword replay", {
+              matched: r.matched,
+              score: r.score,
+              replayed,
+            });
+            return;
+          }
           const m = findAnyKeyword(transcript, activeKeywords.start, threshold);
           if (m) {
             keywordArmed = true;
             diagLog("keyword armed", { matched: m.matched, score: m.score });
             if (shouldPlay("copy")) playEarcon(session, "copy");
           }
-        }
-        if (keywordArmed) {
-          const m = findAnyKeyword(transcript, activeKeywords.end, threshold);
-          if (m) {
+        } else {
+          // Armed: scrap (un-arm), redo (re-arm with fresh state), or
+          // end (commit normally).
+          const scrap = findAnyKeyword(transcript, activeKeywords.scrap, threshold);
+          if (scrap) {
             keywordArmed = false;
-            diagLog("keyword end → commitUserTurn", { matched: m.matched, score: m.score });
+            if (shouldPlay("out")) playEarcon(session, "out");
+            commitAndDrop("keyword scrap", { matched: scrap.matched, score: scrap.score });
+            return;
+          }
+          const redo = findAnyKeyword(transcript, activeKeywords.redo, threshold);
+          if (redo) {
+            // Stay armed — discard the partial transcript and re-fire
+            // the wake earcon so the user knows we're listening fresh.
+            if (shouldPlay("copy")) playEarcon(session, "copy");
+            commitAndDrop("keyword redo", { matched: redo.matched, score: redo.score });
+            return;
+          }
+          const end = findAnyKeyword(transcript, activeKeywords.end, threshold);
+          if (end) {
+            keywordArmed = false;
+            diagLog("keyword end → commitUserTurn", { matched: end.matched, score: end.score });
             if (shouldPlay("over")) playEarcon(session, "over");
             try {
               session.commitUserTurn();
