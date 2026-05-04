@@ -64,6 +64,19 @@ fi
 
 # --- process supervision -------------------------------------------------
 
+# Pre-flight: kill any leftover processes from a previous start.sh that
+# got detached (terminal closed, parent crashed, ./start.sh restarted
+# while a previous run was still alive). The cleanup trap below only
+# runs on this script's exit and only knows about its own children, so
+# orphans from a prior run keep holding ports and would silently make
+# this run fail. We scope the kills to this repo's paths so we don't
+# touch unrelated bun/node processes elsewhere on the box.
+pkill -f "$PWD/server/src/main.ts" 2>/dev/null || true
+pkill -f "$PWD/worker/src/agent.ts" 2>/dev/null || true
+pkill -f "$PWD/wterm/server.mjs" 2>/dev/null || true
+# Brief grace so the OS reclaims the listening sockets before we re-bind.
+sleep 0.3
+
 PIDS=()
 SHUTTING_DOWN=0
 
