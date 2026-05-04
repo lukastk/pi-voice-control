@@ -1,7 +1,6 @@
 /**
  * Text utilities for voice output:
  *   - SpokenTagParser:  extract <spoken>...</spoken> contents from a streaming text feed.
- *   - SpeechChunker:    fallback chunker for raw text when no <spoken> tags appear.
  *   - cleanForSpeech:   strip markdown / code / URLs to make text speakable.
  *   - toolStatusMessage: short spoken status per tool name.
  */
@@ -37,97 +36,6 @@ export class SpokenTagParser {
 
     return results;
   }
-}
-
-export class SpeechChunker {
-  private buffer = "";
-
-  feed(delta: string): string[] {
-    this.buffer += delta;
-    return this.drain(false);
-  }
-
-  flush(): string[] {
-    return this.drain(true);
-  }
-
-  private drain(force: boolean): string[] {
-    const chunks: string[] = [];
-    this.buffer = this.buffer.replace(/\r\n/g, "\n");
-    while (true) {
-      const boundary = this.findBoundary(force);
-      if (boundary === -1) break;
-      const raw = this.buffer.slice(0, boundary).trim();
-      this.buffer = this.buffer.slice(boundary).trimStart();
-      const cleaned = cleanForSpeech(raw);
-      if (cleaned) chunks.push(cleaned + " ");
-    }
-    return chunks;
-  }
-
-  private findBoundary(force: boolean): number {
-    if (force) return this.buffer.length;
-    if (this.buffer.length < 80) return -1;
-
-    const sentenceMatch = /[.!?](?:\s+|$)/g;
-    let match: RegExpExecArray | null;
-    let lastGood = -1;
-    while ((match = sentenceMatch.exec(this.buffer)) !== null) {
-      if (match.index + match[0].length >= 60) {
-        lastGood = match.index + match[0].length;
-        break;
-      }
-    }
-    if (lastGood !== -1) return lastGood;
-
-    const paragraph = this.buffer.indexOf("\n\n");
-    if (paragraph >= 60) return paragraph + 2;
-
-    if (this.buffer.length > 260) {
-      const comma = this.buffer.lastIndexOf(",", 220);
-      if (comma >= 80) return comma + 1;
-      const space = this.buffer.lastIndexOf(" ", 220);
-      if (space >= 80) return space + 1;
-      return 220;
-    }
-    return -1;
-  }
-}
-
-/**
- * Split a single cleaned spoken segment into sentence-sized pieces before
- * enqueueing into the LLM stream that feeds pipelineReply.
- *
- * Why: pushing one ~280-char chunk and then closing the controller tripped
- * a race in livekit-agents' SegmentSynchronizerImpl where the audio task
- * marked itself finished before the text task had fed the synthesizer
- * (logged as `markPlaybackFinished called before text/audio input is done`
- * with `textDone:false`). Net result: the whole segment played as silence
- * — visible in /tmp/vab.log as a content tts_say lasting only ~80ms when
- * the text would normally synthesize over 2+ seconds.
- *
- * Splitting on sentence boundaries gives the framework multiple chunk
- * boundaries to align text and audio against. Empirically 252-char single
- * chunks worked while 279-char single chunks didn't, so we split anything
- * over ~150 chars and let smaller content pass through unchanged.
- */
-export function splitForSpeech(text: string): string[] {
-  if (text.length <= 150) return [text];
-  const pieces: string[] = [];
-  const re = /[.!?](?:\s|$)/g;
-  let start = 0;
-  let match: RegExpExecArray | null;
-  while ((match = re.exec(text)) !== null) {
-    const end = match.index + 1;
-    const piece = text.slice(start, end).trim();
-    if (piece) pieces.push(piece);
-    start = match.index + match[0].length;
-  }
-  if (start < text.length) {
-    const piece = text.slice(start).trim();
-    if (piece) pieces.push(piece);
-  }
-  return pieces.length > 0 ? pieces : [text];
 }
 
 export function cleanForSpeech(text: string): string {

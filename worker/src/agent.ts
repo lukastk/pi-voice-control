@@ -31,13 +31,13 @@ import {
 } from "./pi-bridge.ts";
 import {
   SpokenTagParser,
-  SpeechChunker,
   cleanForSpeech,
-  splitForSpeech,
   toolStatusMessage,
   SPOKEN_TAG_PROMPT,
 } from "./text.ts";
 import { playEarcon, setEarconVolume } from "./earcons.ts";
+
+type SpeechHandle = ReturnType<voice.AgentSession["say"]>;
 
 const AGENT_NAME = "voice-bridge";
 
@@ -118,8 +118,45 @@ class StubLLM extends llm.LLM {
   }
 }
 
+/**
+ * VoiceBridgeAgent
+ *
+ * Bridges a LiveKit voice session to a Pi coding-agent socket.
+ *
+ * Architecture (v2): each Pi `<spoken>` tag becomes its own
+ * `session.say()` call rather than chunks of one streaming TTS.
+ *
+ * Why: the framework's pipelineReply is built around a streaming LLM and
+ * force-closes the TTS pipeline if no audio frames flow for 10s
+ * (TTS_READ_IDLE_TIMEOUT_MS, hardcoded in voice/generation.js). Pi
+ * produces bursty content with multi-second tool gaps between spoken
+ * tags, so any turn longer than the timeout silently dropped everything
+ * after the first tag. Per-tag `say()` sidesteps the issue: each TTS
+ * stream lives only as long as one bounded utterance, the timeout never
+ * has the chance to fire.
+ *
+ * llmNode therefore returns null after kicking off Pi (short-circuiting
+ * the framework's LLM/TTS tasks at generation.js:334-337 and 454-460)
+ * while dispatching `session.say()` from the Pi callbacks. Each spoken
+ * tag is an independent SpeechHandle queued on the AgentSession's
+ * mainTask.
+ *
+ * Critical: pi.prompt is NOT awaited inside llmNode. The framework's
+ * mainTask is blocked on _waitForGeneration of the pipelineReply
+ * speechHandle while llmNode runs; awaiting Pi would mean every
+ * scheduled session.say() handle queues but doesn't play until Pi's
+ * full turn completes. Returning null immediately lets pipelineReply
+ * finish in a few ms, freeing mainTask to drain the say-handles
+ * progressively as Pi emits each spoken tag.
+ *
+ * Interruption: the framework auto-interrupts whichever say-handle is
+ * the current speech. Queued say-handles for the abandoned Pi turn
+ * need explicit cleanup via #interruptPendingSays() so they don't play
+ * after the user has moved on.
+ */
 class VoiceBridgeAgent extends voice.Agent {
   #pi: PiSocket;
+  #pendingSays: SpeechHandle[] = [];
 
   constructor(pi: PiSocket) {
     super({
@@ -129,6 +166,35 @@ class VoiceBridgeAgent extends voice.Agent {
       llm: new StubLLM(),
     });
     this.#pi = pi;
+  }
+
+  /** Schedule a spoken utterance on the session, tracked so we can
+   * interrupt it if the user barges in before it plays. */
+  #scheduleSay(text: string): void {
+    const cleaned = cleanForSpeech(text);
+    if (!cleaned) return;
+    const handle = this.session.say(cleaned, { allowInterruptions: true });
+    this.#pendingSays.push(handle);
+    handle.addDoneCallback((sh) => {
+      this.#pendingSays = this.#pendingSays.filter((h) => h !== sh);
+    });
+  }
+
+  /** Interrupt every queued/in-flight say-handle from the current Pi turn.
+   * Called when the user barges in: the framework only interrupts the
+   * current speech, not items still in the speech queue. */
+  #interruptPendingSays(): void {
+    for (const h of this.#pendingSays) {
+      if (!h.done() && !h.interrupted) {
+        try {
+          h.interrupt();
+        } catch {
+          // Some handles refuse interruption (e.g. allowInterruptions=false).
+          // Earcons are interruptible; this is just defensive.
+        }
+      }
+    }
+    this.#pendingSays = [];
   }
 
   override async llmNode(
@@ -159,158 +225,82 @@ class VoiceBridgeAgent extends voice.Agent {
 
     logger.info({ userText, isInterruption }, "[VoiceBridgeAgent] llmNode");
 
-    // Track whether we should play "out" after the LLM stream closes.
-    // Important: do NOT call session.say() for earcons during the LLM
-    // stream — scheduling a new SpeechHandle while pipelineReply is the
-    // current speech disrupts pipelineReply's progressive TTS playback,
-    // and the user only hears the assistant's reply at the very end.
-    let playOutAfterStreamClose = false;
-    // Lifted out of start() so cancel() can also flip it — once cancel
-    // fires, residual text_delta events from the abandoned Pi turn must
-    // not crash the enqueue path.
-    let controllerClosed = false;
+    if (isInterruption) {
+      this.#interruptPendingSays();
+      pi.abandonCurrentPrompt();
+    }
 
-    return new NodeReadableStream<string | llm.ChatChunk>({
-      async start(controller) {
-        const chunker = new SpeechChunker();
-        const tagParser = new SpokenTagParser();
-        let fullText = "";
-        let spokenCount = 0;
-        let emitCount = 0;
-        let emitChars = 0;
-        let deltaCount = 0;
-        let lastEmit = Date.now();
-        let toolActive = false;
+    if (isInterruption && userText !== pi.currentPromptText) {
+      this.#scheduleSay("Got it.");
+    }
 
-        const safeEnqueue = (chunk: string) => {
-          if (controllerClosed) return false;
-          try {
-            controller.enqueue(chunk);
-            return true;
-          } catch (err) {
-            // Controller closed (e.g. consumer cancelled). Don't crash the
-            // pi.prompt loop on residual events from an abandoned turn.
-            controllerClosed = true;
-            logger.warn({ err: (err as Error)?.message }, "[VoiceBridgeAgent] enqueue failed; controller closed");
-            return false;
-          }
-        };
+    const tagParser = new SpokenTagParser();
+    let fullText = "";
+    let spokenCount = 0;
+    let deltaCount = 0;
 
-        const emit = (raw: string) => {
-          const cleaned = cleanForSpeech(raw);
-          if (!cleaned) return;
-          // Split larger spoken segments before enqueueing — see
-          // splitForSpeech() docstring for the SegmentSynchronizerImpl
-          // race this avoids. Short content goes through as one chunk.
-          for (const piece of splitForSpeech(cleaned)) {
-            if (!safeEnqueue(piece + " ")) return;
-            emitCount++;
-            emitChars += piece.length;
-            lastEmit = Date.now();
-          }
-        };
-
-        const callbacks: PiCallbacks = {
-          onTextDelta(delta) {
-            deltaCount++;
-            fullText += delta;
-            for (const tag of tagParser.feed(delta)) {
-              spokenCount++;
-              logger.info(
-                { len: tag.length, preview: tag.slice(0, 60) },
-                "[VoiceBridgeAgent] <spoken> tag → TTS",
-              );
-              emit(tag);
-            }
-          },
-          onToolStart(toolName) {
-            toolActive = true;
-            safeEnqueue(toolStatusMessage(toolName));
-            lastEmit = Date.now();
-          },
-          onToolEnd() {
-            toolActive = false;
-          },
-          onAgentEnd() {
-            // Defer "out" earcon — fired below after controller.close() so
-            // its SpeechHandle queues behind a fully-completed pipelineReply.
-            if (shouldPlay("out")) playOutAfterStreamClose = true;
-          },
-        };
-
-        const keepalive = setInterval(() => {
-          if (toolActive && Date.now() - lastEmit > 7000) {
-            safeEnqueue("Still working. ");
-            lastEmit = Date.now();
-          }
-        }, 3000);
-
-        try {
-          if (isInterruption && userText !== pi.currentPromptText) {
-            safeEnqueue("Got it. ");
-            lastEmit = Date.now();
-          }
-          await pi.prompt(userText, callbacks, isInterruption);
-
-          if (spokenCount === 0 && fullText.trim()) {
-            logger.warn(
-              { fullTextLen: fullText.length, deltaCount },
-              "[VoiceBridgeAgent] no <spoken> tags — falling back to cleaned text",
-            );
-            for (const chunk of chunker.feed(fullText)) emit(chunk);
-            for (const chunk of chunker.flush()) emit(chunk);
-          }
-
+    const callbacks: PiCallbacks = {
+      onTextDelta: (delta) => {
+        deltaCount++;
+        fullText += delta;
+        for (const tag of tagParser.feed(delta)) {
+          spokenCount++;
           logger.info(
-            {
-              deltaCount,
-              fullTextLen: fullText.length,
-              spokenCount,
-              emitCount,
-              emitChars,
-              controllerClosed,
-            },
-            "[VoiceBridgeAgent] turn complete",
+            { len: tag.length, preview: tag.slice(0, 60) },
+            "[VoiceBridgeAgent] <spoken> tag → say",
           );
-        } catch (err) {
-          if (err instanceof SteeredError) {
-            logger.info("[VoiceBridgeAgent] interrupted by newer voice turn");
-          } else if (err instanceof PiSessionEndedError) {
-            logger.warn("[VoiceBridgeAgent] Pi session has ended");
-            controller.enqueue(
-              "The Pi session has ended. Pick another one in the sessions tab. ",
-            );
-          } else {
-            logger.error({ err }, "[VoiceBridgeAgent] error");
-            controller.enqueue("Sorry, I had trouble with that. ");
-          }
-        } finally {
-          clearInterval(keepalive);
-          if (!controllerClosed) {
-            try {
-              controller.close();
-            } catch {
-              // already closed by cancel — fine
-            }
-            controllerClosed = true;
-          }
-          // Now that pipelineReply has consumed close(), it will finish on
-          // its own. Queueing the "out" earcon here means it lands behind a
-          // pipelineReply that is already wrapping up, not one mid-stream.
-          if (playOutAfterStreamClose) {
-            setTimeout(() => playEarcon(session, "out"), 200);
-          }
+          this.#scheduleSay(tag);
         }
       },
-      cancel(reason) {
-        // LiveKit cancels the LLM stream when the user interrupts (barge-in
-        // or new turn). Mark the controller closed so our enqueue path
-        // becomes a no-op for any text Pi keeps sending after this point.
-        controllerClosed = true;
-        log().info({ reason: String(reason ?? "") }, "[VoiceBridgeAgent] stream cancelled");
-        pi.abandonCurrentPrompt();
+      onToolStart: (toolName) => {
+        this.#scheduleSay(toolStatusMessage(toolName));
       },
+      onToolEnd: () => {},
+      onAgentEnd: () => {
+        // Fallback: Pi finished without ever wrapping content in <spoken>.
+        // Defensive — well-behaved Pi sessions follow the system prompt.
+        if (spokenCount === 0 && fullText.trim()) {
+          logger.warn(
+            { fullTextLen: fullText.length, deltaCount },
+            "[VoiceBridgeAgent] no <spoken> tags — falling back to cleaned full text",
+          );
+          this.#scheduleSay(fullText);
+        }
+        if (shouldPlay("out")) playEarcon(session, "out");
+      },
+    };
+
+    // CRITICAL: do NOT await pi.prompt here.
+    //
+    // We're inside llmNode, which is awaited by the framework's
+    // performLLMInference, which is inside pipelineReply. While pipelineReply
+    // owns _currentSpeech, the AgentSession mainTask is blocked at
+    // _waitForGeneration() and cannot pop new SpeechHandles off the queue.
+    //
+    // If we awaited pi.prompt, every session.say() we scheduled from
+    // callbacks would queue up but not play until Pi's whole turn finished —
+    // defeating the point of progressive playback.
+    //
+    // Instead, start Pi in the background and return null immediately.
+    // pipelineReply then short-circuits both LLM and TTS paths
+    // (generation.js:334-337, 454-460), marks its speech handle done in a
+    // few ms, and mainTask is free to pick up our queued say-handles as
+    // they arrive.
+    pi.prompt(userText, callbacks, isInterruption).catch((err) => {
+      if (err instanceof SteeredError) {
+        logger.info("[VoiceBridgeAgent] pi turn steered (interrupted)");
+      } else if (err instanceof PiSessionEndedError) {
+        logger.warn("[VoiceBridgeAgent] Pi session has ended");
+        this.#scheduleSay(
+          "The Pi session has ended. Pick another one in the sessions tab.",
+        );
+      } else {
+        logger.error({ err }, "[VoiceBridgeAgent] pi error");
+        this.#scheduleSay("Sorry, I had trouble with that.");
+      }
     });
+
+    return null;
   }
 }
 
