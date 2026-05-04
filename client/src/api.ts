@@ -39,8 +39,8 @@ export type Config = {
      *  doesn't make the whole config undefined. The new server always
      *  sends it via mergeDefaults; the SettingsTab handles absence. */
     keywords?: {
-      start: string;
-      end: string;
+      start: string[];
+      end: string[];
       matchThreshold: number;
     };
   };

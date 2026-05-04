@@ -47,8 +47,8 @@ export type TtsConfig = {
 export type TurnMode = "vad" | "manual" | "keyword";
 
 export type KeywordConfig = {
-  start: string;
-  end: string;
+  start: string[];
+  end: string[];
   matchThreshold: number;
 };
 

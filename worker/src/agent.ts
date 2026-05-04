@@ -82,8 +82,8 @@ type TtsConfig = {
 type TurnMode = "vad" | "manual" | "keyword";
 
 type KeywordConfig = {
-  start: string;
-  end: string;
+  start: string[];
+  end: string[];
   matchThreshold: number;
 };
 
@@ -108,8 +108,8 @@ const DEFAULT_EARCONS: EarconConfig = {
 let activeEarcons: EarconConfig = DEFAULT_EARCONS;
 
 const DEFAULT_KEYWORDS: KeywordConfig = {
-  start: "Pi, come in",
-  end: "Pi, that's all",
+  start: ["Pi, come in"],
+  end: ["Pi, that's all"],
   matchThreshold: 0.75,
 };
 
@@ -211,10 +211,30 @@ function findKeyword(
   };
 }
 
+/** Try each alternative keyword in turn; return the best-scoring
+ *  match across all of them, or null if none clear the threshold.
+ *  "Best" rather than "first" so the diag log surfaces the winning
+ *  variant rather than whichever happened to be first in the array. */
+function findAnyKeyword(
+  transcript: string,
+  keywords: string[],
+  threshold: number,
+): { range: [number, number]; score: number; matched: string } | null {
+  let best: { range: [number, number]; score: number; matched: string } | null = null;
+  for (const k of keywords) {
+    if (!k.trim()) continue;
+    const m = findKeyword(transcript, k, threshold);
+    if (m && (!best || m.score > best.score)) {
+      best = { range: m.range, score: m.score, matched: k };
+    }
+  }
+  return best;
+}
+
 function stripKeywords(text: string): string {
   let out = text;
-  for (const k of [activeKeywords.start, activeKeywords.end]) {
-    const m = findKeyword(out, k, activeKeywords.matchThreshold);
+  for (const list of [activeKeywords.start, activeKeywords.end]) {
+    const m = findAnyKeyword(out, list, activeKeywords.matchThreshold);
     if (m) out = (out.slice(0, m.range[0]) + " " + out.slice(m.range[1])).trim();
   }
   return out.replace(/\s+/g, " ").replace(/^[\s,.;:!?]+|[\s,.;:!?]+$/g, "").trim();
@@ -606,18 +626,18 @@ export default defineAgent({
         // to react to keywords as soon as they're recognized rather than
         // waiting for the STT final.
         if (!keywordArmed) {
-          const m = findKeyword(transcript, activeKeywords.start, threshold);
+          const m = findAnyKeyword(transcript, activeKeywords.start, threshold);
           if (m) {
             keywordArmed = true;
-            diagLog("keyword armed", { startKeyword: activeKeywords.start, score: m.score });
+            diagLog("keyword armed", { matched: m.matched, score: m.score });
             if (shouldPlay("copy")) playEarcon(session, "copy");
           }
         }
         if (keywordArmed) {
-          const m = findKeyword(transcript, activeKeywords.end, threshold);
+          const m = findAnyKeyword(transcript, activeKeywords.end, threshold);
           if (m) {
             keywordArmed = false;
-            diagLog("keyword end → commitUserTurn", { endKeyword: activeKeywords.end, score: m.score });
+            diagLog("keyword end → commitUserTurn", { matched: m.matched, score: m.score });
             if (shouldPlay("over")) playEarcon(session, "over");
             try {
               session.commitUserTurn();

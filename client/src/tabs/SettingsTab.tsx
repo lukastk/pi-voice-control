@@ -35,9 +35,16 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
   const [ttsModel, setTtsModel] = useState("eleven_flash_v2_5");
   const [ttsVoice, setTtsVoice] = useState("CwhRBWXzGAHq8TQ4Fs17");
   const [turnMode, setTurnMode] = useState<"vad" | "manual" | "keyword">("vad");
+  // Each kept as a single textarea string with one keyword per line.
+  // We split on save and join on load so the array shape lives only at
+  // the API boundary; the UI is simpler with a plain text field.
   const [keywordStart, setKeywordStart] = useState("Pi, come in");
   const [keywordEnd, setKeywordEnd] = useState("Pi, that's all");
   const [keywordThreshold, setKeywordThreshold] = useState(0.75);
+
+  function splitKeywords(text: string): string[] {
+    return text.split("\n").map((s) => s.trim()).filter(Boolean);
+  }
 
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -97,9 +104,14 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
     // Defensive: an older server may not be sending the keywords block
     // yet (config schema added it). Fall back to the same defaults the
     // server's DEFAULTS uses so the form renders rather than crashing.
-    setKeywordStart(config.voice.keywords?.start ?? "Pi, come in");
-    setKeywordEnd(config.voice.keywords?.end ?? "Pi, that's all");
-    setKeywordThreshold(config.voice.keywords?.matchThreshold ?? 0.75);
+    // Server may also send legacy single-string format from a pre-array
+    // schema; normalize to array first then join one per line.
+    const k = config.voice.keywords;
+    const startArr = Array.isArray(k?.start) ? k!.start : k?.start ? [k.start as unknown as string] : ["Pi, come in"];
+    const endArr = Array.isArray(k?.end) ? k!.end : k?.end ? [k.end as unknown as string] : ["Pi, that's all"];
+    setKeywordStart(startArr.join("\n"));
+    setKeywordEnd(endArr.join("\n"));
+    setKeywordThreshold(k?.matchThreshold ?? 0.75);
   }, [config]);
 
   // Did the user change any setting that only takes effect on next dispatch?
@@ -115,8 +127,8 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
       ttsModel !== config.voice.tts.model ||
       ttsVoice !== config.voice.tts.voiceId ||
       turnMode !== config.voice.turnMode ||
-      keywordStart !== (config.voice.keywords?.start ?? "Pi, come in") ||
-      keywordEnd !== (config.voice.keywords?.end ?? "Pi, that's all") ||
+      JSON.stringify(splitKeywords(keywordStart)) !== JSON.stringify(config.voice.keywords?.start ?? ["Pi, come in"]) ||
+      JSON.stringify(splitKeywords(keywordEnd)) !== JSON.stringify(config.voice.keywords?.end ?? ["Pi, that's all"]) ||
       keywordThreshold !== (config.voice.keywords?.matchThreshold ?? 0.75)
     );
   }, [config, sttProvider, sttModel, sttLanguage, ttsProvider, ttsModel, ttsVoice, turnMode, keywordStart, keywordEnd, keywordThreshold]);
@@ -151,8 +163,8 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
           },
           turnMode,
           keywords: {
-            start: keywordStart.trim() || "Pi, come in",
-            end: keywordEnd.trim() || "Pi, that's all",
+            start: splitKeywords(keywordStart).length > 0 ? splitKeywords(keywordStart) : ["Pi, come in"],
+            end: splitKeywords(keywordEnd).length > 0 ? splitKeywords(keywordEnd) : ["Pi, that's all"],
             matchThreshold: keywordThreshold,
           },
         },
@@ -369,7 +381,7 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
         </Field>
       </Section>
 
-      <Section title="Turn detection">
+      <Section title="Turn detection — mode">
         <Field label="Mode">
           <select
             value={turnMode}
@@ -381,58 +393,62 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
             <option value="keyword">Keyword (speak a phrase to start and end each turn)</option>
           </select>
           <p style={hintStyle}>
-            You can also flip between VAD and PTT on the fly via the <code>VAD</code>/<code>PTT</code> badge in the top bar.
+            You can also cycle through modes on the fly via the <code>VAD</code>/<code>PTT</code>/<code>KW</code> badge in the top bar.
             Switching to or from keyword mode requires a reconnect, since it changes how the agent listens.
           </p>
         </Field>
-        {turnMode === "keyword" && (
-          <>
-            <Field label="Start phrase">
-              <input
-                type="text"
-                value={keywordStart}
-                onChange={(e) => setKeywordStart(e.target.value)}
-                placeholder="Pi, come in"
-                style={inputStyle}
-              />
-              <p style={hintStyle}>
-                Spoken before each message to begin recording. Match is case-insensitive
-                and tolerant of punctuation.
-              </p>
-            </Field>
-            <Field label="End phrase">
-              <input
-                type="text"
-                value={keywordEnd}
-                onChange={(e) => setKeywordEnd(e.target.value)}
-                placeholder="Pi, that's all"
-                style={inputStyle}
-              />
-              <p style={hintStyle}>
-                Spoken after the message to send it. Both phrases are stripped from the
-                transcript before reaching Pi.
-              </p>
-            </Field>
-            <Field label={`Match threshold: ${keywordThreshold.toFixed(2)}`}>
-              <input
-                type="range"
-                min={0.5}
-                max={1}
-                step={0.05}
-                value={keywordThreshold}
-                onChange={(e) => setKeywordThreshold(parseFloat(e.target.value))}
-                style={{ width: "100%" }}
-              />
-              <p style={hintStyle}>
-                How close the spoken transcript has to be to the phrase, on a scale of
-                0.5 (very loose) to 1.0 (exact). Token-level similarity using
-                Levenshtein distance — at 0.75, "high come in" still matches "Pi come
-                in"; at 0.9 it doesn't. Lower the threshold if your STT keeps
-                mishearing the wake phrase; raise it if random speech triggers it.
-              </p>
-            </Field>
-          </>
-        )}
+      </Section>
+
+      <Section title="Keyword mode — phrases">
+        <p style={{ ...hintStyle, marginTop: 0 }}>
+          Configure these any time; they only apply while the mode above is set to <em>Keyword</em>.
+          One phrase per line — any of them can match. Useful for catching common STT mishearings
+          (e.g. add "Pie, come in" or "High, come in" alongside "Pi, come in").
+        </p>
+        <Field label="Start phrases">
+          <textarea
+            value={keywordStart}
+            onChange={(e) => setKeywordStart(e.target.value)}
+            placeholder="Pi, come in&#10;Pie, come in"
+            rows={3}
+            style={{ ...inputStyle, fontFamily: "ui-monospace, monospace", resize: "vertical" }}
+          />
+          <p style={hintStyle}>
+            Spoken before each message to begin recording. Match is case-insensitive,
+            tolerant of punctuation, and uses fuzzy similarity (see threshold below).
+          </p>
+        </Field>
+        <Field label="End phrases">
+          <textarea
+            value={keywordEnd}
+            onChange={(e) => setKeywordEnd(e.target.value)}
+            placeholder="Pi, that's all&#10;Pie, that's all"
+            rows={3}
+            style={{ ...inputStyle, fontFamily: "ui-monospace, monospace", resize: "vertical" }}
+          />
+          <p style={hintStyle}>
+            Spoken after the message to send it. Whichever phrase matched is stripped from the
+            transcript before reaching Pi.
+          </p>
+        </Field>
+        <Field label={`Match threshold: ${keywordThreshold.toFixed(2)}`}>
+          <input
+            type="range"
+            min={0.5}
+            max={1}
+            step={0.05}
+            value={keywordThreshold}
+            onChange={(e) => setKeywordThreshold(parseFloat(e.target.value))}
+            style={{ width: "100%" }}
+          />
+          <p style={hintStyle}>
+            How close the spoken transcript has to be to any of the phrases, on a scale of
+            0.5 (very loose) to 1.0 (exact). Token-level similarity using Levenshtein
+            distance — at 0.75, "high come in" still matches "Pi come in"; at 0.9 it
+            doesn't. Lower the threshold if your STT keeps mishearing the wake phrase;
+            raise it if random speech triggers it.
+          </p>
+        </Field>
       </Section>
 
       <Section title="Earcons (radio etiquette tones)">

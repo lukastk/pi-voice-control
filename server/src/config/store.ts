@@ -48,9 +48,11 @@ export type Config = {
     keywords: {
       // Spoken phrases that bracket each user turn in keyword mode.
       // Matched case-insensitively against STT partial+final transcripts.
-      // Stripped from the message before it's sent to Pi.
-      start: string;
-      end: string;
+      // Stripped from the message before it's sent to Pi. Each side
+      // accepts multiple alternatives — the first one to match wins,
+      // useful for catching STT mishearings ("Pi" → "Pie" / "high").
+      start: string[];
+      end: string[];
       // Fuzzy-match similarity threshold in [0..1]. 1.0 = exact match;
       // ~0.75 lets common STT mishearings match (e.g. "high come in" ≈
       // "pi come in"). Lower = more permissive but more false triggers.
@@ -95,8 +97,8 @@ export const DEFAULTS: Config = {
     },
     turnMode: "vad",
     keywords: {
-      start: "Pi, come in",
-      end: "Pi, that's all",
+      start: ["Pi, come in"],
+      end: ["Pi, that's all"],
       matchThreshold: 0.75,
     },
   },
@@ -122,7 +124,7 @@ export function loadConfig(): Config {
   try {
     const raw = readFileSync(CONFIG_PATH, "utf8");
     const parsed = JSON.parse(raw) as Partial<Config>;
-    cached = mergeDefaults(parsed);
+    cached = normalize(mergeDefaults(parsed));
     return cached;
   } catch (err) {
     console.error(`[config] failed to read ${CONFIG_PATH}:`, err);
@@ -131,13 +133,29 @@ export function loadConfig(): Config {
   }
 }
 
+/** Coerce schema drift from older config files. Today: keywords.start
+ *  / keywords.end were single strings; now they're string arrays.
+ *  Wrap a leftover string into a single-element array. */
+function normalize(cfg: Config): Config {
+  const k = cfg.voice.keywords as { start: unknown; end: unknown; matchThreshold: number };
+  if (typeof k.start === "string") k.start = [k.start];
+  if (typeof k.end === "string") k.end = [k.end];
+  if (!Array.isArray(k.start)) k.start = [...DEFAULTS.voice.keywords.start];
+  if (!Array.isArray(k.end)) k.end = [...DEFAULTS.voice.keywords.end];
+  k.start = (k.start as string[]).map((s) => String(s).trim()).filter(Boolean);
+  k.end = (k.end as string[]).map((s) => String(s).trim()).filter(Boolean);
+  if ((k.start as string[]).length === 0) k.start = [...DEFAULTS.voice.keywords.start];
+  if ((k.end as string[]).length === 0) k.end = [...DEFAULTS.voice.keywords.end];
+  return cfg;
+}
+
 export function getConfig(): Config {
   return loadConfig();
 }
 
 export function updateConfig(patch: DeepPartial<Config>): Config {
   const current = loadConfig();
-  const next = deepMerge(current, patch) as Config;
+  const next = normalize(deepMerge(current, patch) as Config);
   writeFileSync(CONFIG_PATH, JSON.stringify(next, null, 2) + "\n", "utf8");
   cached = next;
   return next;
