@@ -420,6 +420,46 @@ export default defineAgent({
       vad: ctx.proc.userData.vad as silero.VAD,
       stt,
       tts,
+      // Disable false-interruption resume.
+      //
+      // The framework's "false interruption" feature pauses the agent's
+      // speech when VAD picks up a brief blip, then resumes after a
+      // timeout if no real transcript followed. It's the only thing that
+      // sets `pausedSpeech`, and `pausedSpeech` is what powers a buggy
+      // chain in the framework's `userTurnCompleted`:
+      //
+      //   - line 1215: `if (this._currentSpeech) { ... `
+      //   - line 1223: `await this.cancelSpeechPause()` ← yields
+      //     during which cancelSpeechPause calls
+      //     `pausedSpeech.handle.interrupt()`. When that handle is the
+      //     same object as `_currentSpeech` (the common case), the
+      //     interrupt resolves mainTask's `waitIfNotInterrupted` race
+      //     and mainTask sets `_currentSpeech = void 0` *during* the
+      //     await.
+      //   - line 1228: `this._currentSpeech.interrupt()` ← TypeError
+      //     (read of `interrupt` on undefined).
+      //
+      // The throw rejects the userTurnCompleted task. The next user
+      // turn's task awaits the previous one via `oldTask.result`,
+      // rethrows, never reaches `generateReply`. Cascade. No more
+      // replies for the rest of the session. Diagnostic capture in
+      // /tmp/voice-bridge-worker.log shows exactly this pattern: STT
+      // and earcons keep working, generate_reply silently stops firing.
+      //
+      // Disabling resumeFalseInterruption makes `pauseEnabled()` return
+      // false, so `pausedSpeech` is never set and the racy code path is
+      // never entered. We don't want false-interruption-resume anyway —
+      // every barge-in in this voice agent is intentional, the user
+      // expects the agent to stop talking, period.
+      //
+      // The framework bug should still be fixed upstream (an optional
+      // chain on line 1228 plus a try/catch around the oldTask.result
+      // chain), but our code shouldn't depend on that landing.
+      turnHandling: {
+        interruption: {
+          resumeFalseInterruption: false,
+        },
+      },
     });
 
     // Track when the latest final transcript fired so the watchdog can tell
