@@ -52,7 +52,12 @@ if [ ! -d node_modules ] || [ -n "${REINSTALL:-}" ]; then
   bun install
 fi
 
-if [ ! -f client/dist/index.html ] || [ -n "${REBUILD_CLIENT:-}" ]; then
+# Build the client every time by default — UI changes need a fresh
+# bundle and forgetting to rebuild is a recurring source of "why isn't
+# my change showing up". Set SKIP_CLIENT_BUILD=1 for fast restarts when
+# you know the bundle is current. Always builds if dist is missing,
+# regardless of the env flag (serving a missing bundle isn't useful).
+if [ ! -f client/dist/index.html ] || [ -z "${SKIP_CLIENT_BUILD:-}" ]; then
   echo -e "${YELLOW}building client...${NC}"
   (cd client && bun run build)
 fi
