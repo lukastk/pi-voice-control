@@ -387,6 +387,13 @@ class VoiceBridgeAgent extends voice.Agent {
     this.#dropNextTurn = true;
   }
 
+  /** Speak a short feedback message (e.g. "Nothing to replay yet.").
+   *  Same plumbing as a Pi spoken tag — uses the trackable
+   *  #pendingSays queue so an interrupt can cancel it. */
+  sayFeedback(text: string): void {
+    this.#scheduleSay(text);
+  }
+
   /** Schedule a spoken utterance on the session, tracked so we can
    * interrupt it if the user barges in before it plays. */
   #scheduleSay(text: string): void {
@@ -696,6 +703,12 @@ export default defineAgent({
     // emits UserInputTranscribed (interim + final) — we just have to scan
     // those for the start/end phrases ourselves and call commitUserTurn().
     let keywordArmed = false;
+    // Time-based dedup for replay. The replay phrase stays in the
+    // framework's audioTranscript until commitUserTurn's downstream EOU
+    // path clears it (a few hundred ms). Without this guard, every STT
+    // partial that still contains the replay phrase fires another
+    // replay, stacking duplicate playback.
+    let lastReplayFireAt = 0;
 
     session.on(voice.AgentSessionEventTypes.UserInputTranscribed, (ev) => {
       logger.info({ transcript: ev.transcript }, "[worker] user");
@@ -730,13 +743,25 @@ export default defineAgent({
         if (!keywordArmed) {
           // Idle: replay last response, or arm for a new message.
           const r = findAnyKeyword(transcript, activeKeywords.replay, threshold);
-          if (r) {
-            const replayed = agent.replayLastResponse();
+          if (r && Date.now() - lastReplayFireAt > 3000) {
+            lastReplayFireAt = Date.now();
+            // Commit FIRST so the framework's userTurnCompleted runs
+            // its `_currentSpeech.interrupt()` against either nothing
+            // (idle) or the previous agent reply (which we want gone
+            // anyway since the user explicitly said "say again"). THEN
+            // schedule the replay says — by that point they're queued
+            // but not yet _currentSpeech, so they survive the interrupt
+            // and play in order after the commit's no-op pipelineReply.
             commitAndDrop("keyword replay", {
               matched: r.matched,
               score: r.score,
-              replayed,
             });
+            const replayed = agent.replayLastResponse();
+            if (!replayed) {
+              // No prior turn to replay — give the user audible
+              // feedback rather than silent no-op.
+              agent.sayFeedback("Nothing to replay yet.");
+            }
             return;
           }
           const m = findAnyKeyword(transcript, activeKeywords.start, threshold);
