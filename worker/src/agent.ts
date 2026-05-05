@@ -277,7 +277,16 @@ function stripKeywords(text: string): string {
     if (m) out = (out.slice(0, m.range[0]) + " " + out.slice(m.range[1])).trim();
   }
 
-  return out.replace(/\s+/g, " ").replace(/^[\s,.;:!?]+|[\s,.;:!?]+$/g, "").trim();
+  // Asymmetric trim: leading commas/dots/etc. are almost always artifacts
+  // of keyword excision (e.g. residual "." after stripping "Pi, come in"),
+  // but trailing terminal punctuation (.!?) is usually the user's real
+  // sentence ending and should be preserved. So only strip
+  // commas/semicolons/colons + whitespace from the right edge.
+  return out
+    .replace(/\s+/g, " ")
+    .replace(/^[\s,.;:!?]+/, "")
+    .replace(/[\s,;:]+$/, "")
+    .trim();
 }
 
 function shouldPlay(kind: "over" | "copy" | "out"): boolean {
