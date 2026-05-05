@@ -53,9 +53,14 @@ export class NativeTransport extends VoiceEventEmitter implements VoiceTransport
   async connect({
     dispatch,
     turnMode,
+    micEnabled,
   }: {
     dispatch: DispatchResult;
     turnMode: "vad" | "manual" | "keyword";
+    micEnabled: boolean;
+    // micDeviceId is web-only — Android uses the system audio source —
+    // accepted in the type for symmetry but ignored here.
+    micDeviceId: string | null;
   }): Promise<void> {
     const bridge = window.AndroidVoiceBridge;
     if (!bridge) {
@@ -71,7 +76,7 @@ export class NativeTransport extends VoiceEventEmitter implements VoiceTransport
       dispatch.token,
       dispatch.roomName,
       "user",
-      turnMode === "manual",
+      turnMode === "manual" || !micEnabled,
     );
     if (!accepted) {
       throw new Error("native bridge rejected connect");

@@ -24,6 +24,10 @@ export type VoiceState =
 type ConnectOptions = {
   /** "manual" mode starts with mic muted; "vad" and "keyword" leave it open. */
   turnMode: "vad" | "manual" | "keyword";
+  /** Master mic toggle. When false, mic stays muted regardless of mode. */
+  micEnabled: boolean;
+  /** Specific input device. null = browser/OS default. Web-transport only. */
+  micDeviceId: string | null;
 };
 
 /**
@@ -123,9 +127,11 @@ export function useVoice() {
 
   const connect = useCallback(
     async (socketPath: string, opts: ConnectOptions) => {
-      append(`select ${socketPath} (mode=${opts.turnMode})`);
+      append(`select ${socketPath} (mode=${opts.turnMode}, micEnabled=${opts.micEnabled})`);
       setState({ kind: "connecting", socketPath });
-      setMicMutedState(opts.turnMode === "manual");
+      // Initial mute reflects either PTT-default-muted or the master
+      // mic-enabled toggle being off.
+      setMicMutedState(opts.turnMode === "manual" || !opts.micEnabled);
       try {
         if (transportRef.current) {
           await transportRef.current.disconnect();
@@ -135,7 +141,12 @@ export function useVoice() {
         append(`room=${dispatch.roomName}`);
         const transport = pickTransport();
         wireTransport(transport);
-        await transport.connect({ dispatch, turnMode: opts.turnMode });
+        await transport.connect({
+          dispatch,
+          turnMode: opts.turnMode,
+          micEnabled: opts.micEnabled,
+          micDeviceId: opts.micDeviceId,
+        });
         transportRef.current = transport;
         setState({ kind: "connected", socketPath });
       } catch (err: any) {

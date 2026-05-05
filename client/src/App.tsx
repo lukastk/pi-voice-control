@@ -61,6 +61,8 @@ export function App() {
   }, [voice.state, server.sessions]);
 
   const turnMode = server.config?.voice.turnMode ?? "vad";
+  const micEnabled = server.config?.voice.micEnabled ?? true;
+  const micDeviceId = server.config?.voice.micDeviceId ?? null;
   async function toggleTurnMode() {
     if (!server.config) return;
     // Cycle VAD → PTT → KW → VAD. Switching between VAD and PTT is
@@ -76,11 +78,29 @@ export function App() {
         if (crossesKeywordBoundary) {
           await reconnectVoice();
         } else {
-          await voice.setMicMutedExplicit(next === "manual");
+          // The master micEnabled toggle dominates: if the user has
+          // muted the mic globally, stay muted regardless of mode.
+          await voice.setMicMutedExplicit(next === "manual" || !micEnabled);
         }
       }
     } catch (err: any) {
       console.error("[turn-mode] toggle failed:", err);
+    }
+  }
+
+  async function toggleMicEnabled() {
+    if (!server.config) return;
+    const next = !micEnabled;
+    try {
+      await api.putConfig({ voice: { micEnabled: next } });
+      if (voice.state.kind === "connected") {
+        // When disabling: always mute. When re-enabling: respect mode
+        // (PTT stays muted-by-default, VAD/KW go hot).
+        const muted = !next || turnMode === "manual";
+        await voice.setMicMutedExplicit(muted);
+      }
+    } catch (err: any) {
+      console.error("[mic-enabled] toggle failed:", err);
     }
   }
 
@@ -97,6 +117,8 @@ export function App() {
     await new Promise((r) => setTimeout(r, 400));
     await voice.connect(socketPath, {
       turnMode: server.config?.voice.turnMode ?? "vad",
+      micEnabled: server.config?.voice.micEnabled ?? true,
+      micDeviceId: server.config?.voice.micDeviceId ?? null,
     });
   }
   const [resolveStatus, setResolveStatus] = useState<string | null>(null);
@@ -144,6 +166,17 @@ export function App() {
           </button>
         ))}
         <div className="tabbar-spacer" />
+        <button
+          className={`mode-btn ${micEnabled ? "mic-on" : "mic-off"}`}
+          onClick={toggleMicEnabled}
+          title={
+            micEnabled
+              ? "Microphone is on. Click to mute (privacy override — keeps mode settings)."
+              : "Microphone is muted. Click to re-enable listening."
+          }
+        >
+          {micEnabled ? "🎙" : "🚫"}
+        </button>
         <button
           className={`mode-btn mode-${turnMode}`}
           onClick={toggleTurnMode}

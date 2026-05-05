@@ -32,6 +32,8 @@ export interface VoiceTransport {
   connect(args: {
     dispatch: DispatchResult;
     turnMode: "vad" | "manual" | "keyword";
+    micEnabled: boolean;
+    micDeviceId: string | null;
   }): Promise<void>;
   disconnect(): Promise<void>;
   setMicMuted(muted: boolean): Promise<void>;

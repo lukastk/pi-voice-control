@@ -67,6 +67,16 @@ export type Config = {
       // "pi come in"). Lower = more permissive but more false triggers.
       matchThreshold: number;
     };
+    // Master mic toggle, orthogonal to turnMode. When false, the mic
+    // stays muted regardless of mode (no STT, no agent attention) —
+    // useful for short privacy windows without losing your VAD/KW
+    // settings. Toggle from the top-bar mic button.
+    micEnabled: boolean;
+    // Specific microphone device to capture from. null = browser
+    // default. Populated by the Settings tab from
+    // navigator.mediaDevices.enumerateDevices(). Web-transport only;
+    // the Android wrapper uses the system audio source.
+    micDeviceId: string | null;
   };
 };
 
@@ -113,6 +123,8 @@ export const DEFAULTS: Config = {
       replay: ["Pi, say again"],
       matchThreshold: 0.75,
     },
+    micEnabled: true,
+    micDeviceId: null,
   },
 };
 

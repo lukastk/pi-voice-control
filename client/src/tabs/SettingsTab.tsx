@@ -44,6 +44,32 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
   const [keywordRedo, setKeywordRedo] = useState("Pi, do over");
   const [keywordReplay, setKeywordReplay] = useState("Pi, say again");
   const [keywordThreshold, setKeywordThreshold] = useState(0.75);
+  const [micEnabled, setMicEnabled] = useState(true);
+  const [micDeviceId, setMicDeviceId] = useState<string | null>(null);
+  const [micDevices, setMicDevices] = useState<MediaDeviceInfo[]>([]);
+
+  // Enumerate audio inputs on mount and on device changes. Labels are
+  // hidden until the page has had mic permission, so first-time users
+  // see generic IDs; after one connect, labels populate.
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !navigator.mediaDevices) return;
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const devs = await navigator.mediaDevices.enumerateDevices();
+        if (cancelled) return;
+        setMicDevices(devs.filter((d) => d.kind === "audioinput"));
+      } catch (err) {
+        console.warn("[settings] enumerateDevices failed:", err);
+      }
+    };
+    refresh();
+    navigator.mediaDevices.addEventListener?.("devicechange", refresh);
+    return () => {
+      cancelled = true;
+      navigator.mediaDevices.removeEventListener?.("devicechange", refresh);
+    };
+  }, []);
 
   function splitKeywords(text: string): string[] {
     return text.split("\n").map((s) => s.trim()).filter(Boolean);
@@ -121,6 +147,8 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
     setKeywordRedo(arrayFromConfig(k?.redo, ["Pi, do over"]).join("\n"));
     setKeywordReplay(arrayFromConfig(k?.replay, ["Pi, say again"]).join("\n"));
     setKeywordThreshold(k?.matchThreshold ?? 0.75);
+    setMicEnabled(config.voice.micEnabled ?? true);
+    setMicDeviceId(config.voice.micDeviceId ?? null);
   }, [config]);
 
   // Did the user change any setting that only takes effect on next dispatch?
@@ -141,9 +169,11 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
       JSON.stringify(splitKeywords(keywordScrap)) !== JSON.stringify(arrayFromConfig(config.voice.keywords?.scrap, ["Pi, scrap that"])) ||
       JSON.stringify(splitKeywords(keywordRedo)) !== JSON.stringify(arrayFromConfig(config.voice.keywords?.redo, ["Pi, do over"])) ||
       JSON.stringify(splitKeywords(keywordReplay)) !== JSON.stringify(arrayFromConfig(config.voice.keywords?.replay, ["Pi, say again"])) ||
-      keywordThreshold !== (config.voice.keywords?.matchThreshold ?? 0.75)
+      keywordThreshold !== (config.voice.keywords?.matchThreshold ?? 0.75) ||
+      micEnabled !== (config.voice.micEnabled ?? true) ||
+      micDeviceId !== (config.voice.micDeviceId ?? null)
     );
-  }, [config, sttProvider, sttModel, sttLanguage, ttsProvider, ttsModel, ttsVoice, turnMode, keywordStart, keywordEnd, keywordScrap, keywordRedo, keywordReplay, keywordThreshold]);
+  }, [config, sttProvider, sttModel, sttLanguage, ttsProvider, ttsModel, ttsVoice, turnMode, keywordStart, keywordEnd, keywordScrap, keywordRedo, keywordReplay, keywordThreshold, micEnabled, micDeviceId]);
 
   async function save(): Promise<boolean> {
     setError(null);
@@ -182,6 +212,8 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
             replay: splitKeywords(keywordReplay).length > 0 ? splitKeywords(keywordReplay) : ["Pi, say again"],
             matchThreshold: keywordThreshold,
           },
+          micEnabled,
+          micDeviceId,
         },
       });
       setSavedAt(Date.now());
@@ -392,6 +424,42 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
               : ttsProvider === "openai"
               ? "OpenAI voice — picked from a fixed catalogue."
               : "Cartesia voice ID (UUID). Browse at play.cartesia.ai/voices."}
+          </p>
+        </Field>
+      </Section>
+
+      <Section title="Microphone">
+        <Field label="Enabled">
+          <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <input
+              type="checkbox"
+              checked={micEnabled}
+              onChange={(e) => setMicEnabled(e.target.checked)}
+            />
+            <span style={{ fontSize: 13 }}>
+              When off, the microphone stays muted in every mode (privacy override).
+              Also toggleable from the 🎙 / 🚫 button in the top bar.
+            </span>
+          </label>
+        </Field>
+        <Field label="Input device">
+          <select
+            value={micDeviceId ?? ""}
+            onChange={(e) => setMicDeviceId(e.target.value === "" ? null : e.target.value)}
+            style={inputStyle}
+          >
+            <option value="">Default (let the browser choose)</option>
+            {micDevices.map((d) => (
+              <option key={d.deviceId} value={d.deviceId}>
+                {d.label || `Microphone ${d.deviceId.slice(0, 8)}…`}
+              </option>
+            ))}
+          </select>
+          <p style={hintStyle}>
+            Web only — the Android wrapper uses the system audio source. Device labels
+            stay hidden until the page has been granted microphone permission, so on
+            first load you may see generic IDs; after a successful Connect voice they
+            populate with real names. Changing the device requires a reconnect.
           </p>
         </Field>
       </Section>

@@ -27,9 +27,13 @@ export class WebTransport extends VoiceEventEmitter implements VoiceTransport {
   async connect({
     dispatch,
     turnMode,
+    micEnabled,
+    micDeviceId,
   }: {
     dispatch: DispatchResult;
     turnMode: "vad" | "manual" | "keyword";
+    micEnabled: boolean;
+    micDeviceId: string | null;
   }): Promise<void> {
     // Secure-context preflight: getUserMedia is blocked on http:// from
     // any non-localhost host. Without this, the browser throws an opaque
@@ -55,6 +59,11 @@ export class WebTransport extends VoiceEventEmitter implements VoiceTransport {
         autoGainControl: true,
         echoCancellation: true,
         noiseSuppression: true,
+        // Pass through a specific deviceId if the user picked one in
+        // Settings; otherwise let the browser/OS pick the default.
+        // null/empty here means "default" — passing undefined to the SDK
+        // is what triggers the default-device path.
+        ...(micDeviceId ? { deviceId: micDeviceId } : {}),
       },
     });
     this.room = room;
@@ -134,7 +143,10 @@ export class WebTransport extends VoiceEventEmitter implements VoiceTransport {
     // if the user is in manual mode — setMicrophoneEnabled(true) is
     // needed to publish a track at all.
     await room.localParticipant.setMicrophoneEnabled(true);
-    if (turnMode === "manual") {
+    // Initial mute state: muted in manual mode (PTT default behavior),
+    // or whenever micEnabled is false (master toggle off). Otherwise the
+    // mic is hot for VAD / keyword to pick up.
+    if (turnMode === "manual" || !micEnabled) {
       await this.muteTrack(true);
     }
 

@@ -157,7 +157,11 @@ export function SessionsTab({ sessions, config, voice, onRefresh, resolveStatus 
                   ) : (
                     <button
                       onClick={() =>
-                        voice.connect(s.socketPath, { turnMode: config?.voice.turnMode ?? "vad" })
+                        voice.connect(s.socketPath, {
+                          turnMode: config?.voice.turnMode ?? "vad",
+                          micEnabled: config?.voice.micEnabled ?? true,
+                          micDeviceId: config?.voice.micDeviceId ?? null,
+                        })
                       }
                       style={btnPrimary}
                     >
