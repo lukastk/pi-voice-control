@@ -44,6 +44,13 @@ const TABS: { id: TabId; label: string }[] = [
 
 export function App() {
   const [tab, setTab] = useState<TabId>("sessions");
+  // Lazy-mount the terminal iframe — booting it inside a display:none parent
+  // means wterm's ResizeObserver measures 0×0 and the grid sticks at 80×24
+  // even after the tab is revealed.
+  const [terminalVisited, setTerminalVisited] = useState(tab === "terminal");
+  useEffect(() => {
+    if (tab === "terminal") setTerminalVisited(true);
+  }, [tab]);
   const server = useServerState();
   const voice = useVoice();
 
@@ -176,9 +183,11 @@ export function App() {
       </nav>
       <ToastStack toasts={voice.toasts} onDismiss={voice.dismissToast} />
       <main className="content">
-        <div style={{ display: tab === "terminal" ? "block" : "none", height: "100%" }}>
-          <TerminalTab termPort={server.termPort} termPinned={server.termPinned} />
-        </div>
+        {terminalVisited && (
+          <div style={{ display: tab === "terminal" ? "block" : "none", height: "100%" }}>
+            <TerminalTab termPort={server.termPort} termPinned={server.termPinned} />
+          </div>
+        )}
         {tab === "sessions" && (
           <SessionsTab
             sessions={server.sessions}

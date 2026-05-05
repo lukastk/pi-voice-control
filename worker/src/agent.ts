@@ -239,20 +239,44 @@ function findAnyKeyword(
 
 function stripKeywords(text: string): string {
   let out = text;
-  // Strip all five slots — a redo/scrap/replay phrase shouldn't reach
-  // Pi if it ended up in the committed transcript anyway (unlikely but
-  // defensive).
-  const slots = [
-    activeKeywords.start,
-    activeKeywords.end,
-    activeKeywords.scrap,
-    activeKeywords.redo,
-    activeKeywords.replay,
-  ];
-  for (const list of slots) {
-    const m = findAnyKeyword(out, list, activeKeywords.matchThreshold);
+
+  // Stripping uses a more permissive threshold than detection. Detection
+  // ran on partial transcripts and has to avoid false fires, so it sits
+  // at a higher bar (default 0.75). By the time the framework finalizes
+  // and commits, the polished transcript can differ from the partial that
+  // triggered detection — STT may drop "Pi" entirely, or render it as
+  // "K", "Kit", "high", etc. — and the polished version can fall below
+  // the detection threshold even though we know the keyword was spoken.
+  // A lower strip threshold cleans up these mishearings without affecting
+  // detection sensitivity. Floor at 0.4 so it doesn't degrade into
+  // matching arbitrary noise.
+  const stripThreshold = Math.max(activeKeywords.matchThreshold - 0.25, 0.4);
+
+  // Start phrase: drop everything from the beginning of the transcript
+  // through the end of the match. Anything before the start phrase is
+  // pre-keyword speech the user happened to make before triggering the
+  // agent — clearly not part of the message they intended to send.
+  const startMatch = findAnyKeyword(out, activeKeywords.start, stripThreshold);
+  if (startMatch) out = out.slice(startMatch.range[1]);
+
+  // End phrase: drop from the start of the match through the end of the
+  // transcript. The user said "...Pi, that's all" and wants the trailer
+  // gone whether or not it transcribed perfectly.
+  const endMatch = findAnyKeyword(out, activeKeywords.end, stripThreshold);
+  if (endMatch) out = out.slice(0, endMatch.range[0]);
+
+  // Defensive: if a scrap/redo/replay phrase somehow ended up in a
+  // committed transcript that reached llmNode, excise it (single match).
+  // These almost never need stripping in practice — the keyword
+  // handlers commit-and-drop those turns before llmNode runs — but a
+  // weird interleaving (say, partial that didn't quite trigger
+  // detection but appeared in the polished transcript) could let one
+  // through.
+  for (const list of [activeKeywords.scrap, activeKeywords.redo, activeKeywords.replay]) {
+    const m = findAnyKeyword(out, list, stripThreshold);
     if (m) out = (out.slice(0, m.range[0]) + " " + out.slice(m.range[1])).trim();
   }
+
   return out.replace(/\s+/g, " ").replace(/^[\s,.;:!?]+|[\s,.;:!?]+$/g, "").trim();
 }
 
