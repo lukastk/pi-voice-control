@@ -49,6 +49,10 @@ export function useVoice() {
   const [state, setState] = useState<VoiceState>({ kind: "idle" });
   const [log, setLog] = useState<string[]>([]);
   const [micMuted, setMicMutedState] = useState<boolean>(false);
+  // Mirrors the worker's keyword-mode armed state, pushed over the
+  // LiveKit data channel as {kind:"voice-state", armed: bool}. Always
+  // false outside keyword mode and outside an active session.
+  const [armed, setArmed] = useState<boolean>(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const toastIdRef = useRef(0);
   const transportRef = useRef<VoiceTransport | null>(null);
@@ -103,9 +107,14 @@ export function useVoice() {
         pushToast("info", "WebRTC", "Voice link restored.");
       });
       transport.on("data", (ev) => {
-        // The worker publishes {kind, source?, message} on the data
-        // channel — surface as a toast if it parses cleanly.
         const msg = ev.message;
+        // voice-state messages: today just the keyword-mode armed flag.
+        if (msg && msg.kind === "voice-state") {
+          if (typeof msg.armed === "boolean") setArmed(msg.armed);
+          return;
+        }
+        // Toast-eligible kinds the worker publishes:
+        // {kind, source?, message}.
         if (
           msg &&
           (msg.kind === "error" || msg.kind === "info") &&
@@ -166,6 +175,7 @@ export function useVoice() {
     await api.releaseSession();
     setState({ kind: "idle" });
     setMicMutedState(false);
+    setArmed(false);
     append("disconnected");
   }, [append]);
 
@@ -194,6 +204,7 @@ export function useVoice() {
     connect,
     disconnect,
     micMuted,
+    armed,
     toggleMic,
     setMicMutedExplicit,
     toasts,

@@ -142,6 +142,35 @@ body,
   background: #2a2a40;
 }
 
+.armed-indicator {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  color: #ff7070;
+  margin-right: 10px;
+  padding: 3px 9px;
+  background: rgba(255, 60, 60, 0.08);
+  border: 1px solid rgba(255, 60, 60, 0.4);
+  border-radius: 3px;
+}
+
+.armed-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ff4040;
+  box-shadow: 0 0 6px rgba(255, 64, 64, 0.6);
+  animation: armed-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes armed-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.4; transform: scale(0.7); }
+}
+
 .toast-stack {
   position: fixed;
   bottom: 16px;

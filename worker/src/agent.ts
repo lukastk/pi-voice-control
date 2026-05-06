@@ -740,6 +740,33 @@ export default defineAgent({
     // repeatedly until the audioTranscript clears.
     let lastAbortFireAt = 0;
 
+    // Publish a voice-state change to the client over the LiveKit data
+    // channel. Used today for the keyword-mode "armed" indicator in the
+    // top bar; future state can ride the same kind="voice-state" topic.
+    const publishVoiceState = (state: Record<string, unknown>) => {
+      try {
+        const payload = new TextEncoder().encode(
+          JSON.stringify({ kind: "voice-state", ...state }),
+        );
+        ctx.room.localParticipant?.publishData(payload, {
+          reliable: true,
+          topic: "voice-bridge",
+        });
+      } catch (e: any) {
+        logger.error({ err: e }, "[worker] publishVoiceState failed");
+      }
+    };
+
+    // Single mutator so every armed-state transition (start, end,
+    // scrap, redo, abort) goes through one place that also announces
+    // the change to the client. No-op if state is unchanged.
+    const setArmed = (next: boolean) => {
+      if (keywordArmed === next) return;
+      keywordArmed = next;
+      diagLog("keyword armed state", { armed: next });
+      publishVoiceState({ armed: next });
+    };
+
     session.on(voice.AgentSessionEventTypes.UserInputTranscribed, (ev) => {
       logger.info({ transcript: ev.transcript }, "[worker] user");
       const final =
@@ -775,7 +802,7 @@ export default defineAgent({
           const a = findAnyKeyword(transcript, activeKeywords.abort, threshold);
           if (a) {
             lastAbortFireAt = Date.now();
-            keywordArmed = false;
+            setArmed(false);
             commitAndDrop("keyword abort", { matched: a.matched, score: a.score });
             agent.abortCurrent();
             agent.sayFeedback("Aborted.");
@@ -814,7 +841,7 @@ export default defineAgent({
           }
           const m = findAnyKeyword(transcript, activeKeywords.start, threshold);
           if (m) {
-            keywordArmed = true;
+            setArmed(true);
             diagLog("keyword armed", { matched: m.matched, score: m.score });
             if (shouldPlay("copy")) playEarcon(session, "copy");
           }
@@ -823,7 +850,7 @@ export default defineAgent({
           // end (commit normally).
           const scrap = findAnyKeyword(transcript, activeKeywords.scrap, threshold);
           if (scrap) {
-            keywordArmed = false;
+            setArmed(false);
             if (shouldPlay("out")) playEarcon(session, "out");
             commitAndDrop("keyword scrap", { matched: scrap.matched, score: scrap.score });
             return;
@@ -838,7 +865,7 @@ export default defineAgent({
           }
           const end = findAnyKeyword(transcript, activeKeywords.end, threshold);
           if (end) {
-            keywordArmed = false;
+            setArmed(false);
             diagLog("keyword end → commitUserTurn", { matched: end.matched, score: end.score });
             if (shouldPlay("over")) playEarcon(session, "over");
             try {

@@ -199,6 +199,15 @@ export function App() {
             {voice.micMuted ? "🎤 Tap to talk" : "🎤 Talking — tap to stop"}
           </button>
         )}
+        {voice.state.kind === "connected" && turnMode === "keyword" && voice.armed && (
+          <span
+            className="armed-indicator"
+            title="Recording — speak your message, then say the end phrase to send."
+          >
+            <span className="armed-dot" />
+            <span style={{ marginLeft: 6 }}>recording</span>
+          </span>
+        )}
         {voice.state.kind === "connected" && connectedSession && (
           <span className="session-label" title={connectedSession.cwd ?? connectedSession.socketPath}>
             {connectedSession.cwd ? basename(connectedSession.cwd) : connectedSession.sessionId.slice(0, 8)}
