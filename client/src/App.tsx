@@ -155,6 +155,8 @@ export function App() {
       .catch((err) => setResolveStatus(`error: ${err.message}`));
   }, [server.config]);
 
+  const connected = voice.state.kind === "connected";
+
   return (
     <div className="app">
       <nav className="tabbar">
@@ -168,49 +170,7 @@ export function App() {
           </button>
         ))}
         <div className="tabbar-spacer" />
-        <button
-          className={`mode-btn ${micEnabled ? "mic-on" : "mic-off"}`}
-          onClick={toggleMicEnabled}
-          title={
-            micEnabled
-              ? "Microphone is on. Click to mute (privacy override — keeps mode settings)."
-              : "Microphone is muted. Click to re-enable listening."
-          }
-        >
-          {micEnabled ? "🎙" : "🚫"}
-        </button>
-        <button
-          className={`mode-btn mode-${turnMode}`}
-          onClick={toggleTurnMode}
-          title={
-            turnMode === "vad"
-              ? "VAD: auto-detect end of speech. Click to switch to push-to-talk."
-              : turnMode === "manual"
-                ? "PTT: mic stays muted until you tap Talk. Click to switch to keyword mode."
-                : "Keyword: speak start/end phrases to bracket each turn. Click to switch back to VAD (will reconnect)."
-          }
-        >
-          {turnMode === "vad" ? "VAD" : turnMode === "manual" ? "PTT" : "KW"}
-        </button>
-        {voice.state.kind === "connected" && turnMode === "manual" && (
-          <button
-            className={`talk-btn ${voice.micMuted ? "" : "talk-btn-active"}`}
-            onClick={() => voice.toggleMic()}
-            title={voice.micMuted ? "Tap to start talking" : "Tap to stop talking"}
-          >
-            {voice.micMuted ? "🎤 Tap to talk" : "🎤 Talking — tap to stop"}
-          </button>
-        )}
-        {voice.state.kind === "connected" && turnMode === "keyword" && voice.armed && (
-          <span
-            className="armed-indicator"
-            title="Recording — speak your message, then say the end phrase to send."
-          >
-            <span className="armed-dot" />
-            <span style={{ marginLeft: 6 }}>recording</span>
-          </span>
-        )}
-        {voice.state.kind === "connected" && connectedSession && (
+        {connected && connectedSession && (
           <span className="session-label" title={connectedSession.cwd ?? connectedSession.socketPath}>
             {connectedSession.cwd ? basename(connectedSession.cwd) : connectedSession.sessionId.slice(0, 8)}
           </span>
@@ -219,12 +179,55 @@ export function App() {
           className={`voice-badge voice-${voice.state.kind}`}
           title={`voice: ${voice.state.kind}`}
         >
-          {voice.state.kind === "connected" ? "● voice" : voice.state.kind === "connecting" ? "… voice" : ""}
+          {connected ? "● voice" : voice.state.kind === "connecting" ? "… voice" : ""}
         </span>
         <span className={`health health-${server.health}`} title={`server ${server.health}`}>
           ●
         </span>
       </nav>
+      {connected && (
+        <div className="voice-bar">
+          <button
+            className={`mode-btn ${micEnabled ? "mic-on" : "mic-off"}`}
+            onClick={toggleMicEnabled}
+            title={
+              micEnabled
+                ? "Microphone is on. Click to mute (privacy override — keeps mode settings)."
+                : "Microphone is muted. Click to re-enable listening."
+            }
+          >
+            {micEnabled ? "🎙" : "🚫"}
+          </button>
+          <button
+            className={`mode-btn mode-${turnMode}`}
+            onClick={toggleTurnMode}
+            title={
+              turnMode === "vad"
+                ? "VAD: auto-detect end of speech. Click to switch to push-to-talk."
+                : turnMode === "manual"
+                  ? "PTT: mic stays muted until you tap Talk. Click to switch to keyword mode."
+                  : "Keyword: speak start/end phrases to bracket each turn. Click to switch back to VAD (will reconnect)."
+            }
+          >
+            {turnMode === "vad" ? "VAD" : turnMode === "manual" ? "PTT" : "KW"}
+          </button>
+          {turnMode === "manual" && (
+            <button
+              className={`talk-btn ${voice.micMuted ? "" : "talk-btn-active"}`}
+              onClick={() => voice.toggleMic()}
+              title={voice.micMuted ? "Tap to start talking" : "Tap to stop talking"}
+            >
+              {voice.micMuted ? "🎤 Tap to talk" : "🎤 Talking — tap to stop"}
+            </button>
+          )}
+          {turnMode === "keyword" && (
+            <KeywordControls
+              armed={voice.armed}
+              onAction={(a) => voice.publishControl(a)}
+            />
+          )}
+        </div>
+      )}
       <ToastStack toasts={voice.toasts} onDismiss={voice.dismissToast} />
       <main className="content">
         {terminalVisited && (
@@ -266,6 +269,86 @@ export function App() {
           />
         )}
       </main>
+    </div>
+  );
+}
+
+/**
+ * Six buttons mirroring the spoken keywords (start / end / scrap /
+ * redo / replay / abort) plus the recording indicator. Each click
+ * publishes a control message to the worker via the LiveKit data
+ * channel; the worker's performAction() handles it the same way as
+ * a spoken match. Buttons gate themselves on the armed state so a
+ * misclick doesn't fire a no-op.
+ *
+ * Mobile-friendly: the parent .voice-bar has flex-wrap, so on a
+ * narrow viewport the buttons spill onto a second row.
+ */
+function KeywordControls({
+  armed,
+  onAction,
+}: {
+  armed: boolean;
+  onAction: (action: "start" | "end" | "scrap" | "redo" | "replay" | "abort") => void;
+}) {
+  return (
+    <div className="kw-controls">
+      {armed && (
+        <span
+          className="armed-indicator"
+          title="Recording — speak your message, then click End or say the end phrase."
+        >
+          <span className="armed-dot" />
+          <span style={{ marginLeft: 6 }}>recording</span>
+        </span>
+      )}
+      <button
+        className="kw-btn kw-start"
+        onClick={() => onAction("start")}
+        disabled={armed}
+        title="Begin a new message. Same as saying the start phrase."
+      >
+        ▶ Start
+      </button>
+      <button
+        className="kw-btn kw-end"
+        onClick={() => onAction("end")}
+        disabled={!armed}
+        title="Send the current message to Pi. Same as saying the end phrase."
+      >
+        ✓ End
+      </button>
+      <button
+        className="kw-btn kw-scrap"
+        onClick={() => onAction("scrap")}
+        disabled={!armed}
+        title="Discard the current message and stop listening."
+      >
+        ✗ Scrap
+      </button>
+      <button
+        className="kw-btn kw-redo"
+        onClick={() => onAction("redo")}
+        disabled={!armed}
+        title="Discard and start the message over."
+      >
+        ↻ Redo
+      </button>
+      <button
+        className="kw-btn kw-replay"
+        onClick={() => onAction("replay")}
+        disabled={armed}
+        title="Re-speak the agent's last response."
+      >
+        ↺ Replay
+      </button>
+      <button
+        className="kw-btn kw-abort"
+        onClick={() => onAction("abort")}
+        title="Tell Pi to stop whatever it's doing (escape-key equivalent)."
+      >
+        ⊘ Abort
+      </button>
     </div>
   );
 }

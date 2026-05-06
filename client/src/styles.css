@@ -149,12 +149,67 @@ body,
   font-weight: 600;
   letter-spacing: 0.4px;
   color: #ff7070;
-  margin-right: 10px;
   padding: 3px 9px;
   background: rgba(255, 60, 60, 0.08);
   border: 1px solid rgba(255, 60, 60, 0.4);
   border-radius: 3px;
 }
+
+/* Voice control bar — second row that appears only while a voice
+   session is connected. Hosts the mic toggle, mode badge, and
+   mode-specific controls (PTT tap-to-talk button or KW action
+   buttons). flex-wrap so it spills onto a third row on narrow
+   viewports rather than overflowing horizontally. */
+.voice-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: #0e0e1a;
+  border-bottom: 1px solid #2a2a40;
+  flex-shrink: 0;
+}
+
+.voice-bar .mode-btn {
+  margin-right: 0;
+}
+
+.kw-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.kw-btn {
+  font-size: 11px;
+  padding: 4px 10px;
+  background: #1a1a2e;
+  color: #c0c0d0;
+  border: 1px solid #2a2a40;
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+}
+
+.kw-btn:hover:not(:disabled) {
+  background: #2a2a40;
+  color: #e6e6f0;
+}
+
+.kw-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.kw-end { color: #7ec07e; border-color: #2a4a2a; }
+.kw-end:hover:not(:disabled) { background: #1f2f1f; }
+.kw-scrap { color: #d0a070; border-color: #4a3a2a; }
+.kw-scrap:hover:not(:disabled) { background: #2f261f; }
+.kw-abort { color: #ff7070; border-color: #6a2a2a; }
+.kw-abort:hover:not(:disabled) { background: #3a1f1f; }
 
 .armed-dot {
   display: inline-block;

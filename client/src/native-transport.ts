@@ -117,6 +117,15 @@ export class NativeTransport extends VoiceEventEmitter implements VoiceTransport
     // Bridge fires "mic-state"; voice.ts listener updates React state.
   }
 
+  async publishControl(_action: string): Promise<void> {
+    // The Android bridge holds the LiveKit Room on the native side, so
+    // there's no JS-side publishData here. Could be added later by
+    // exposing a publishControl JNI method on AndroidVoiceBridge — for
+    // now keyword-mode UI buttons are a web-only convenience and the
+    // user can still drive everything via spoken keywords on Android.
+    console.warn("[native] publishControl not implemented; use spoken keyword");
+  }
+
   private handleNative(env: NativeEnvelope): void {
     switch (env.type) {
       case "connected":

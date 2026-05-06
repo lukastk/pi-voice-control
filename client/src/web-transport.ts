@@ -178,6 +178,13 @@ export class WebTransport extends VoiceEventEmitter implements VoiceTransport {
     this.emit({ type: "mic-state", muted });
   }
 
+  async publishControl(action: string): Promise<void> {
+    const room = this.room;
+    if (!room) return;
+    const payload = new TextEncoder().encode(JSON.stringify({ kind: "control", action }));
+    await room.localParticipant.publishData(payload, { reliable: true, topic: "voice-bridge" });
+  }
+
   private async muteTrack(muted: boolean): Promise<void> {
     const room = this.room;
     if (!room) return;

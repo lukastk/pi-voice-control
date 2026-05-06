@@ -20,6 +20,7 @@ import { STT as DeepgramSTT } from "@livekit/agents-plugin-deepgram";
 import { TTS as ElevenLabsTTS } from "@livekit/agents-plugin-elevenlabs";
 import { TTS as CartesiaTTS } from "@livekit/agents-plugin-cartesia";
 import * as silero from "@livekit/agents-plugin-silero";
+import { RoomEvent } from "@livekit/rtc-node";
 import { fileURLToPath } from "node:url";
 import { ReadableStream as NodeReadableStream } from "node:stream/web";
 import * as fs from "node:fs";
@@ -767,6 +768,99 @@ export default defineAgent({
       publishVoiceState({ armed: next });
     };
 
+    // Common helper: clear the framework's transcript buffer by
+    // committing the user turn while flagging the resulting llmNode
+    // call to drop the message instead of forwarding to Pi.
+    const commitAndDrop = (note: string, payload: Record<string, unknown>) => {
+      diagLog(note, payload);
+      agent.markDropNext();
+      try {
+        session.commitUserTurn();
+      } catch (err) {
+        logger.warn({ err }, "[worker] commitUserTurn failed");
+      }
+    };
+
+    type Action = "start" | "end" | "scrap" | "redo" | "replay" | "abort";
+    type ActionSource = "keyword" | "ui";
+
+    /** Apply a keyword-mode action regardless of how it was triggered.
+     *  Used by both spoken-keyword detection (with its own dedup +
+     *  state checks above) and UI button clicks via the data channel.
+     *  Idempotent for state changes — a second "start" while armed
+     *  is a no-op, etc. */
+    const performAction = (action: Action, source: ActionSource): void => {
+      diagLog("action", { action, source, armed: keywordArmed });
+      switch (action) {
+        case "start": {
+          if (keywordArmed) return;
+          setArmed(true);
+          if (shouldPlay("copy")) playEarcon(session, "copy");
+          break;
+        }
+        case "end": {
+          if (!keywordArmed) return;
+          setArmed(false);
+          if (shouldPlay("over")) playEarcon(session, "over");
+          try {
+            session.commitUserTurn();
+          } catch (err) {
+            logger.warn({ err }, "[worker] commitUserTurn failed");
+          }
+          break;
+        }
+        case "scrap": {
+          if (!keywordArmed) return;
+          setArmed(false);
+          if (shouldPlay("out")) playEarcon(session, "out");
+          commitAndDrop("action scrap", { source });
+          break;
+        }
+        case "redo": {
+          if (!keywordArmed) return;
+          if (shouldPlay("copy")) playEarcon(session, "copy");
+          commitAndDrop("action redo", { source });
+          break;
+        }
+        case "replay": {
+          if (keywordArmed) return; // only when idle
+          // Commit FIRST so the framework's userTurnCompleted runs
+          // its `_currentSpeech.interrupt()` against either nothing
+          // (idle) or the previous agent reply (which we want gone
+          // anyway since the user explicitly said "say again"). THEN
+          // schedule the replay says — by that point they're queued
+          // but not yet _currentSpeech, so they survive the interrupt.
+          commitAndDrop("action replay", { source });
+          const replayed = agent.replayLastResponse();
+          if (!replayed) agent.sayFeedback("Nothing to replay yet.");
+          break;
+        }
+        case "abort": {
+          setArmed(false);
+          commitAndDrop("action abort", { source });
+          agent.abortCurrent();
+          agent.sayFeedback("Aborted.");
+          break;
+        }
+      }
+    };
+
+    // Listen for control messages from the client UI (button clicks
+    // in the keyword-mode action bar). They ride the same data-channel
+    // topic the worker uses to publish state changes; the client wraps
+    // each click in {kind:"control", action:"<name>"}.
+    ctx.room.on(RoomEvent.DataReceived, (payload, _participant, _kind, topic) => {
+      if (topic !== "voice-bridge") return;
+      try {
+        const msg = JSON.parse(new TextDecoder().decode(payload));
+        if (msg && msg.kind === "control" && typeof msg.action === "string") {
+          performAction(msg.action as Action, "ui");
+        }
+      } catch {
+        // ignore malformed payloads
+      }
+    });
+
     session.on(voice.AgentSessionEventTypes.UserInputTranscribed, (ev) => {
       logger.info({ transcript: ev.transcript }, "[worker] user");
       const final =
@@ -779,33 +873,15 @@ export default defineAgent({
         const transcript = ev.transcript ?? "";
         const threshold = activeKeywords.matchThreshold;
 
-        // Common helper: clear the framework's transcript buffer by
-        // committing the user turn while flagging the resulting llmNode
-        // call to drop the message instead of forwarding to Pi.
-        const commitAndDrop = (note: string, payload: Record<string, unknown>) => {
-          diagLog(note, payload);
-          agent.markDropNext();
-          try {
-            session.commitUserTurn();
-          } catch (err) {
-            logger.warn({ err }, "[worker] commitUserTurn failed");
-          }
-        };
-
-        // Abort: usable in any state. Pi gets {abort:true} (escape-key
-        // equivalent in the TUI), pending says are interrupted so the
-        // agent stops talking mid-sentence if it was, and the local
-        // pi.prompt is abandoned. Same time-based dedup as replay so
-        // partials that still contain "Pi, abort" before the framework
-        // clears the transcript don't trigger repeated aborts.
+        // Abort: usable in any state, with time-based dedup so STT
+        // partials still containing the abort phrase don't fire it
+        // repeatedly until the framework clears the transcript.
         if (Date.now() - lastAbortFireAt > 3000) {
           const a = findAnyKeyword(transcript, activeKeywords.abort, threshold);
           if (a) {
             lastAbortFireAt = Date.now();
-            setArmed(false);
-            commitAndDrop("keyword abort", { matched: a.matched, score: a.score });
-            agent.abortCurrent();
-            agent.sayFeedback("Aborted.");
+            diagLog("keyword abort", { matched: a.matched, score: a.score });
+            performAction("abort", "keyword");
             return;
           }
         }
@@ -820,59 +896,34 @@ export default defineAgent({
           const r = findAnyKeyword(transcript, activeKeywords.replay, threshold);
           if (r && Date.now() - lastReplayFireAt > 3000) {
             lastReplayFireAt = Date.now();
-            // Commit FIRST so the framework's userTurnCompleted runs
-            // its `_currentSpeech.interrupt()` against either nothing
-            // (idle) or the previous agent reply (which we want gone
-            // anyway since the user explicitly said "say again"). THEN
-            // schedule the replay says — by that point they're queued
-            // but not yet _currentSpeech, so they survive the interrupt
-            // and play in order after the commit's no-op pipelineReply.
-            commitAndDrop("keyword replay", {
-              matched: r.matched,
-              score: r.score,
-            });
-            const replayed = agent.replayLastResponse();
-            if (!replayed) {
-              // No prior turn to replay — give the user audible
-              // feedback rather than silent no-op.
-              agent.sayFeedback("Nothing to replay yet.");
-            }
+            diagLog("keyword replay", { matched: r.matched, score: r.score });
+            performAction("replay", "keyword");
             return;
           }
           const m = findAnyKeyword(transcript, activeKeywords.start, threshold);
           if (m) {
-            setArmed(true);
-            diagLog("keyword armed", { matched: m.matched, score: m.score });
-            if (shouldPlay("copy")) playEarcon(session, "copy");
+            diagLog("keyword start", { matched: m.matched, score: m.score });
+            performAction("start", "keyword");
           }
         } else {
           // Armed: scrap (un-arm), redo (re-arm with fresh state), or
           // end (commit normally).
           const scrap = findAnyKeyword(transcript, activeKeywords.scrap, threshold);
           if (scrap) {
-            setArmed(false);
-            if (shouldPlay("out")) playEarcon(session, "out");
-            commitAndDrop("keyword scrap", { matched: scrap.matched, score: scrap.score });
+            diagLog("keyword scrap", { matched: scrap.matched, score: scrap.score });
+            performAction("scrap", "keyword");
             return;
           }
           const redo = findAnyKeyword(transcript, activeKeywords.redo, threshold);
           if (redo) {
-            // Stay armed — discard the partial transcript and re-fire
-            // the wake earcon so the user knows we're listening fresh.
-            if (shouldPlay("copy")) playEarcon(session, "copy");
-            commitAndDrop("keyword redo", { matched: redo.matched, score: redo.score });
+            diagLog("keyword redo", { matched: redo.matched, score: redo.score });
+            performAction("redo", "keyword");
             return;
           }
           const end = findAnyKeyword(transcript, activeKeywords.end, threshold);
           if (end) {
-            setArmed(false);
-            diagLog("keyword end → commitUserTurn", { matched: end.matched, score: end.score });
-            if (shouldPlay("over")) playEarcon(session, "over");
-            try {
-              session.commitUserTurn();
-            } catch (err) {
-              logger.warn({ err }, "[worker] commitUserTurn failed");
-            }
+            diagLog("keyword end", { matched: end.matched, score: end.score });
+            performAction("end", "keyword");
           }
         }
         return; // skip the VAD-mode over earcon below

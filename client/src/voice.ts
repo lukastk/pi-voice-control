@@ -198,6 +198,19 @@ export function useVoice() {
     [append, micMuted],
   );
 
+  const publishControl = useCallback(
+    async (action: string) => {
+      if (!transportRef.current) return;
+      try {
+        await transportRef.current.publishControl(action);
+        append(`control: ${action}`);
+      } catch (err: any) {
+        append(`control failed: ${action}: ${err?.message ?? err}`);
+      }
+    },
+    [append],
+  );
+
   return {
     state,
     log,
@@ -207,6 +220,7 @@ export function useVoice() {
     armed,
     toggleMic,
     setMicMutedExplicit,
+    publishControl,
     toasts,
     dismissToast,
   };

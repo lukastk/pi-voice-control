@@ -37,6 +37,10 @@ export interface VoiceTransport {
   }): Promise<void>;
   disconnect(): Promise<void>;
   setMicMuted(muted: boolean): Promise<void>;
+  /** Publish a UI-control message to the worker over the LiveKit data
+   *  channel. Used by the keyword-mode action buttons in the top bar
+   *  to invoke start/end/scrap/redo/replay/abort without speaking. */
+  publishControl(action: string): Promise<void>;
   on<E extends VoiceEvent["type"]>(
     type: E,
     handler: VoiceEventHandler<E>,
