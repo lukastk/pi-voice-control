@@ -3,6 +3,7 @@ import { TerminalTab } from "./tabs/TerminalTab.tsx";
 import { SessionsTab } from "./tabs/SessionsTab.tsx";
 import { PromptTab } from "./tabs/PromptTab.tsx";
 import { SettingsTab } from "./tabs/SettingsTab.tsx";
+import { TestTab } from "./tabs/TestTab.tsx";
 import { useServerState } from "./state.ts";
 import { useVoice, type Toast } from "./voice.ts";
 import { api } from "./api.ts";
@@ -33,13 +34,14 @@ function ToastStack({
   );
 }
 
-type TabId = "terminal" | "sessions" | "prompt" | "settings";
+type TabId = "terminal" | "sessions" | "prompt" | "settings" | "test";
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "terminal", label: "Terminal" },
   { id: "sessions", label: "Sessions" },
   { id: "prompt", label: "Voice prompt" },
   { id: "settings", label: "Settings" },
+  { id: "test", label: "Test" },
 ];
 
 export function App() {
@@ -247,6 +249,20 @@ export function App() {
             config={server.config}
             voiceConnected={voice.state.kind === "connected"}
             onReconnect={reconnectVoice}
+          />
+        )}
+        {tab === "test" && (
+          <TestTab
+            sttSummary={
+              server.config
+                ? `${server.config.voice.stt.provider} · ${server.config.voice.stt.model}`
+                : "loading…"
+            }
+            ttsSummary={
+              server.config
+                ? `${server.config.voice.tts.provider} · ${server.config.voice.tts.model}`
+                : "loading…"
+            }
           />
         )}
       </main>

@@ -142,6 +142,46 @@ export const api = {
     jsonFetch<{ ok: boolean; voices: ElevenLabsVoice[]; error?: string }>(
       `/api/voices/elevenlabs${opts.refresh ? "?refresh=1" : ""}`,
     ),
+
+  /** One-shot transcribe via the configured STT provider. The audio
+   *  blob's content-type drives the file-format hint sent upstream. */
+  testStt: async (
+    audio: Blob,
+  ): Promise<{ ok: boolean; transcript?: string; provider?: string; error?: string }> => {
+    const res = await fetch("/api/test/stt", {
+      method: "POST",
+      headers: { "Content-Type": audio.type || "audio/webm" },
+      body: audio,
+    });
+    return (await res.json()) as {
+      ok: boolean;
+      transcript?: string;
+      provider?: string;
+      error?: string;
+    };
+  },
+
+  /** One-shot synthesize via the configured TTS provider. Returns the
+   *  audio blob ready to feed into an HTMLAudioElement.src. The server
+   *  responds with audio/mpeg for any provider. */
+  testTts: async (
+    text: string,
+  ): Promise<
+    | { ok: true; audio: Blob; provider: string }
+    | { ok: false; error: string }
+  > => {
+    const res = await fetch("/api/test/tts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      return { ok: false, error: body.error ?? `HTTP ${res.status}` };
+    }
+    const audio = await res.blob();
+    return { ok: true, audio, provider: res.headers.get("X-Tts-Provider") ?? "" };
+  },
 };
 
 export type ElevenLabsVoice = {

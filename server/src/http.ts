@@ -19,6 +19,8 @@ import {
   clearSystemPromptOnSocket,
 } from "./prompt/inject.ts";
 import { expandTilde } from "./util/path.ts";
+import { transcribe } from "./voice/stt.ts";
+import { synthesize } from "./voice/tts.ts";
 
 type ElevenLabsVoice = { voice_id: string; name: string; category?: string };
 
@@ -234,6 +236,47 @@ export function mountApi(app: Hono) {
     const next = updateConfig(body);
     publish({ type: "config:updated", data: next });
     return c.json(next);
+  });
+
+  // One-shot test endpoints for the Test tab. Use the configured STT
+  // and TTS providers directly (no Pi session, no LiveKit room).
+  app.post("/api/test/stt", async (c) => {
+    try {
+      const audio = new Uint8Array(await c.req.arrayBuffer());
+      if (audio.byteLength === 0) {
+        return c.json({ ok: false, error: "empty audio body" }, 400);
+      }
+      const cfg = getConfig();
+      const result = await transcribe({
+        audio,
+        contentType: c.req.header("content-type") ?? "audio/webm",
+        config: cfg.voice.stt,
+      });
+      return c.json({ ok: true, ...result });
+    } catch (err: any) {
+      return c.json({ ok: false, error: err.message }, 502);
+    }
+  });
+
+  app.post("/api/test/tts", async (c) => {
+    try {
+      const body = (await c.req.json()) as { text?: string };
+      const text = typeof body?.text === "string" ? body.text.trim() : "";
+      if (!text) {
+        return c.json({ ok: false, error: "empty text" }, 400);
+      }
+      const cfg = getConfig();
+      const result = await synthesize({ text, config: cfg.voice.tts });
+      return new Response(result.audio as BodyInit, {
+        status: 200,
+        headers: {
+          "Content-Type": result.contentType,
+          "X-Tts-Provider": result.provider,
+        },
+      });
+    } catch (err: any) {
+      return c.json({ ok: false, error: err.message }, 502);
+    }
   });
 
   app.get("/api/voices/elevenlabs", async (c) => {
