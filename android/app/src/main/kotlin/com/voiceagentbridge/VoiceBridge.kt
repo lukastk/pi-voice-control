@@ -10,6 +10,7 @@ import io.livekit.android.LiveKitOverrides
 import io.livekit.android.events.RoomEvent
 import io.livekit.android.events.collect
 import io.livekit.android.room.Room
+import io.livekit.android.room.track.DataPublishReliability
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -131,6 +132,35 @@ class VoiceBridge(
                         .put("source", "audio")
                         .put("message", "mic toggle failed: ${t.message ?: t.javaClass.simpleName}"),
                 )
+            }
+        }
+    }
+
+    /**
+     * Publish a UI control message to the worker over the LiveKit data
+     * channel. Mirrors the Web SDK transport's publishControl: the React
+     * UI calls this from the keyword-mode action buttons (Start / End /
+     * Scrap / Redo / Replay / Abort) so the user can drive the keyword
+     * pipeline without speaking. The JSON shape matches what the worker
+     * expects on topic "voice-bridge": {"kind":"control","action":"<name>"}.
+     */
+    @JavascriptInterface
+    fun publishControl(action: String) {
+        Log.i(TAG, "publishControl($action)")
+        scope.launch {
+            val r = room ?: return@launch
+            try {
+                val json = JSONObject()
+                    .put("kind", "control")
+                    .put("action", action)
+                    .toString()
+                r.localParticipant.publishData(
+                    data = json.toByteArray(Charsets.UTF_8),
+                    reliability = DataPublishReliability.RELIABLE,
+                    topic = "voice-bridge",
+                )
+            } catch (t: Throwable) {
+                Log.w(TAG, "publishControl failed: ${t.message}", t)
             }
         }
     }
