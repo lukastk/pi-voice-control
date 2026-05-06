@@ -52,6 +52,7 @@ export type KeywordConfig = {
   scrap: string[];
   redo: string[];
   replay: string[];
+  abort: string[];
   matchThreshold: number;
 };
 

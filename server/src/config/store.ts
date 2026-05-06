@@ -57,11 +57,16 @@ export type Config = {
       //   scrap  — discard the current message, return to idle
       //   redo   — discard the current message, restart armed
       //   replay — re-speak the last agent response (only while idle)
+      //   abort  — tell Pi to stop whatever it's doing (escape-key
+      //            equivalent). Recognized in any state; cancels the
+      //            in-flight pi.prompt and stops the agent from
+      //            speaking further chunks of its current reply.
       start: string[];
       end: string[];
       scrap: string[];
       redo: string[];
       replay: string[];
+      abort: string[];
       // Fuzzy-match similarity threshold in [0..1]. 1.0 = exact match;
       // ~0.75 lets common STT mishearings match (e.g. "high come in" ≈
       // "pi come in"). Lower = more permissive but more false triggers.
@@ -121,6 +126,7 @@ export const DEFAULTS: Config = {
       scrap: ["Pi, scrap that"],
       redo: ["Pi, do over"],
       replay: ["Pi, say again"],
+      abort: ["Pi, abort"],
       matchThreshold: 0.75,
     },
     micEnabled: true,
@@ -169,6 +175,7 @@ function normalize(cfg: Config): Config {
     "scrap",
     "redo",
     "replay",
+    "abort",
   ];
   for (const slot of slots) {
     let v = k[slot];

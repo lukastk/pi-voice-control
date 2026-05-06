@@ -43,6 +43,7 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
   const [keywordScrap, setKeywordScrap] = useState("Pi, scrap that");
   const [keywordRedo, setKeywordRedo] = useState("Pi, do over");
   const [keywordReplay, setKeywordReplay] = useState("Pi, say again");
+  const [keywordAbort, setKeywordAbort] = useState("Pi, abort");
   const [keywordThreshold, setKeywordThreshold] = useState(0.75);
   const [micEnabled, setMicEnabled] = useState(true);
   const [micDeviceId, setMicDeviceId] = useState<string | null>(null);
@@ -146,6 +147,7 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
     setKeywordScrap(arrayFromConfig(k?.scrap, ["Pi, scrap that"]).join("\n"));
     setKeywordRedo(arrayFromConfig(k?.redo, ["Pi, do over"]).join("\n"));
     setKeywordReplay(arrayFromConfig(k?.replay, ["Pi, say again"]).join("\n"));
+    setKeywordAbort(arrayFromConfig(k?.abort, ["Pi, abort"]).join("\n"));
     setKeywordThreshold(k?.matchThreshold ?? 0.75);
     setMicEnabled(config.voice.micEnabled ?? true);
     setMicDeviceId(config.voice.micDeviceId ?? null);
@@ -169,11 +171,12 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
       JSON.stringify(splitKeywords(keywordScrap)) !== JSON.stringify(arrayFromConfig(config.voice.keywords?.scrap, ["Pi, scrap that"])) ||
       JSON.stringify(splitKeywords(keywordRedo)) !== JSON.stringify(arrayFromConfig(config.voice.keywords?.redo, ["Pi, do over"])) ||
       JSON.stringify(splitKeywords(keywordReplay)) !== JSON.stringify(arrayFromConfig(config.voice.keywords?.replay, ["Pi, say again"])) ||
+      JSON.stringify(splitKeywords(keywordAbort)) !== JSON.stringify(arrayFromConfig(config.voice.keywords?.abort, ["Pi, abort"])) ||
       keywordThreshold !== (config.voice.keywords?.matchThreshold ?? 0.75) ||
       micEnabled !== (config.voice.micEnabled ?? true) ||
       micDeviceId !== (config.voice.micDeviceId ?? null)
     );
-  }, [config, sttProvider, sttModel, sttLanguage, ttsProvider, ttsModel, ttsVoice, turnMode, keywordStart, keywordEnd, keywordScrap, keywordRedo, keywordReplay, keywordThreshold, micEnabled, micDeviceId]);
+  }, [config, sttProvider, sttModel, sttLanguage, ttsProvider, ttsModel, ttsVoice, turnMode, keywordStart, keywordEnd, keywordScrap, keywordRedo, keywordReplay, keywordAbort, keywordThreshold, micEnabled, micDeviceId]);
 
   async function save(): Promise<boolean> {
     setError(null);
@@ -210,6 +213,7 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
             scrap: splitKeywords(keywordScrap).length > 0 ? splitKeywords(keywordScrap) : ["Pi, scrap that"],
             redo: splitKeywords(keywordRedo).length > 0 ? splitKeywords(keywordRedo) : ["Pi, do over"],
             replay: splitKeywords(keywordReplay).length > 0 ? splitKeywords(keywordReplay) : ["Pi, say again"],
+            abort: splitKeywords(keywordAbort).length > 0 ? splitKeywords(keywordAbort) : ["Pi, abort"],
             matchThreshold: keywordThreshold,
           },
           micEnabled,
@@ -551,6 +555,21 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
           <p style={hintStyle}>
             Spoken between turns (when not currently composing a message) to re-speak
             the agent's last response.
+          </p>
+        </Field>
+        <Field label="Abort phrases">
+          <textarea
+            value={keywordAbort}
+            onChange={(e) => setKeywordAbort(e.target.value)}
+            placeholder="Pi, abort"
+            rows={2}
+            style={{ ...inputStyle, fontFamily: "ui-monospace, monospace", resize: "vertical" }}
+          />
+          <p style={hintStyle}>
+            Spoken at any time to tell Pi to stop whatever it's currently doing —
+            equivalent to pressing escape in the TUI. Also interrupts the agent if
+            it's mid-response. Recognized whether or not you're currently composing
+            a message.
           </p>
         </Field>
         <Field label={`Match threshold: ${keywordThreshold.toFixed(2)}`}>

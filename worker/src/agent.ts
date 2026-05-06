@@ -87,6 +87,7 @@ type KeywordConfig = {
   scrap: string[];
   redo: string[];
   replay: string[];
+  abort: string[];
   matchThreshold: number;
 };
 
@@ -116,6 +117,7 @@ const DEFAULT_KEYWORDS: KeywordConfig = {
   scrap: ["Pi, scrap that"],
   redo: ["Pi, do over"],
   replay: ["Pi, say again"],
+  abort: ["Pi, abort"],
   matchThreshold: 0.75,
 };
 
@@ -272,7 +274,7 @@ function stripKeywords(text: string): string {
   // weird interleaving (say, partial that didn't quite trigger
   // detection but appeared in the polished transcript) could let one
   // through.
-  for (const list of [activeKeywords.scrap, activeKeywords.redo, activeKeywords.replay]) {
+  for (const list of [activeKeywords.scrap, activeKeywords.redo, activeKeywords.replay, activeKeywords.abort]) {
     const m = findAnyKeyword(out, list, stripThreshold);
     if (m) out = (out.slice(0, m.range[0]) + " " + out.slice(m.range[1])).trim();
   }
@@ -401,6 +403,21 @@ class VoiceBridgeAgent extends voice.Agent {
    *  #pendingSays queue so an interrupt can cancel it. */
   sayFeedback(text: string): void {
     this.#scheduleSay(text);
+  }
+
+  /** Abort whatever Pi is currently doing (escape-key equivalent
+   *  in the TUI), interrupt any speech the agent is in the middle
+   *  of, and clear our local pi-prompt state. Called from the
+   *  keyword-mode "abort" command. */
+  abortCurrent(): void {
+    this.#interruptPendingSays();
+    this.#pi.abort();
+    // Reject the in-flight pi.prompt() so its .catch handler runs
+    // and the next user turn doesn't think we're still busy. The
+    // background pi.prompt promise rejects with SteeredError which
+    // we already handle silently.
+    this.#pi.abandonCurrentPrompt();
+    diagLog("abortCurrent");
   }
 
   /** Schedule a spoken utterance on the session, tracked so we can
@@ -718,6 +735,10 @@ export default defineAgent({
     // partial that still contains the replay phrase fires another
     // replay, stacking duplicate playback.
     let lastReplayFireAt = 0;
+    // Same dedup mechanism for abort. Without it, every STT partial
+    // that still contains the abort phrase would fire pi.abort()
+    // repeatedly until the audioTranscript clears.
+    let lastAbortFireAt = 0;
 
     session.on(voice.AgentSessionEventTypes.UserInputTranscribed, (ev) => {
       logger.info({ transcript: ev.transcript }, "[worker] user");
@@ -743,6 +764,24 @@ export default defineAgent({
             logger.warn({ err }, "[worker] commitUserTurn failed");
           }
         };
+
+        // Abort: usable in any state. Pi gets {abort:true} (escape-key
+        // equivalent in the TUI), pending says are interrupted so the
+        // agent stops talking mid-sentence if it was, and the local
+        // pi.prompt is abandoned. Same time-based dedup as replay so
+        // partials that still contain "Pi, abort" before the framework
+        // clears the transcript don't trigger repeated aborts.
+        if (Date.now() - lastAbortFireAt > 3000) {
+          const a = findAnyKeyword(transcript, activeKeywords.abort, threshold);
+          if (a) {
+            lastAbortFireAt = Date.now();
+            keywordArmed = false;
+            commitAndDrop("keyword abort", { matched: a.matched, score: a.score });
+            agent.abortCurrent();
+            agent.sayFeedback("Aborted.");
+            return;
+          }
+        }
 
         // Scan partials too — Deepgram emits ~150ms partials and we want
         // to react to keywords as soon as they're recognized rather than

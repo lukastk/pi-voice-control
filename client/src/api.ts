@@ -44,6 +44,7 @@ export type Config = {
       scrap: string[];
       redo: string[];
       replay: string[];
+      abort: string[];
       matchThreshold: number;
     };
     /** Optional in case server is older than the schema. */
