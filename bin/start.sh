@@ -80,13 +80,24 @@ fi
 # while a previous run was still alive). The cleanup trap below only
 # runs on this script's exit and only knows about its own children, so
 # orphans from a prior run keep holding ports and would silently make
-# this run fail. We scope the kills to this repo's paths so we don't
-# touch unrelated bun/node processes elsewhere on the box.
-pkill -f "$PWD/server/src/main.ts" 2>/dev/null || true
-pkill -f "$PWD/worker/src/agent.ts" 2>/dev/null || true
-pkill -f "$PWD/wterm/server.mjs" 2>/dev/null || true
+# this run fail.
+#
+# We free our ports directly via lsof rather than pkill-by-path, because
+# the wterm subprocess is spawned as `node ... server.mjs` with cwd set
+# to wterm/, so its cmdline doesn't contain the repo path and pkill -f
+# misses it entirely. Port-based cleanup is robust to this and
+# inherently scoped to "things listening on the ports we need".
+for port in 7890 7891 7880; do
+  pids=$(lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)
+  [ -n "$pids" ] && kill $pids 2>/dev/null || true
+done
 # Brief grace so the OS reclaims the listening sockets before we re-bind.
 sleep 0.3
+# Anything still holding the ports gets the hammer.
+for port in 7890 7891 7880; do
+  pids=$(lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)
+  [ -n "$pids" ] && kill -9 $pids 2>/dev/null || true
+done
 
 PIDS=()
 SHUTTING_DOWN=0
@@ -115,9 +126,16 @@ cleanup() {
       kill -9 "$pid" 2>/dev/null || true
     fi
   done
-  # extra guards for orphaned subprocesses scoped to this repo
-  pkill -f "$PWD/worker/src/agent.ts" 2>/dev/null || true
-  pkill -f "$PWD/wterm/server.mjs" 2>/dev/null || true
+  # Final sweep: anything still bound to our ports is by definition
+  # an orphan we missed (e.g. the wterm node subprocess reparented to
+  # init when its bun parent died, whose cmdline doesn't carry the
+  # repo path so pkill -f can't find it). Kill them so the next run
+  # — whether `./start.sh` or a process supervisor — gets a clean
+  # slate.
+  for port in 7890 7891 7880; do
+    pids=$(lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)
+    [ -n "$pids" ] && kill -9 $pids 2>/dev/null || true
+  done
   # rtc-node sometimes leaves a job_proc_lazy_main.js worker behind after a
   # native cleanup race ("libc++abi: mutex lock failed"). Force-kill any
   # node processes that look like ours to keep ports free for the next run.
