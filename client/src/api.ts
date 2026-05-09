@@ -95,6 +95,18 @@ export const api = {
       body: JSON.stringify({ pin }),
     }),
 
+  /** Force-switch the wterm view to the current voice target's pane.
+   *  Ignores the pin flag. Returns ok=false with an error string if
+   *  there's no active session or the session has no tmux pane. */
+  focusTerm: () =>
+    jsonFetch<{
+      ok: boolean;
+      switched?: number;
+      total?: number;
+      target?: string;
+      error?: string;
+    }>("/api/term/focus", { method: "POST" }),
+
   listSessions: () => jsonFetch<PiSession[]>("/api/sessions"),
   refreshSessions: () =>
     jsonFetch<PiSession[]>("/api/sessions/refresh", { method: "POST" }),

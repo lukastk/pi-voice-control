@@ -80,6 +80,41 @@ export function mountApi(app: Hono) {
     return c.json({ ok: true, pinned: pin });
   });
 
+  // Manual "focus the terminal on the current voice target" — re-runs
+  // the wterm switch against the active dispatch target. Ignores the
+  // pin flag (the user clicked a button, that's an explicit override).
+  // Useful when the auto-switch on /sessions/select silently no-op'd
+  // (e.g. session snapshot wasn't populated yet, no tmux clients
+  // attached at dispatch time, etc.).
+  app.post("/api/term/focus", async (c) => {
+    // Always returns 200 with {ok, error?}. The "no active session" /
+    // "no tmux pane" cases are domain-level outcomes, not wire errors,
+    // so the client can render them as inline status without going
+    // through fetch's exception path.
+    const target = getCurrentTarget();
+    if (!target) {
+      return c.json({ ok: false, error: "no active voice session" });
+    }
+    const session = getSessionsSnapshot().find((s) => s.socketPath === target.socketPath);
+    const tmuxTarget = session ? targetForSession(session) : null;
+    if (!tmuxTarget) {
+      return c.json({
+        ok: false,
+        error:
+          "session has no tmux pane (snapshot stale, or the Pi process isn't running inside tmux)",
+      });
+    }
+    const result = await switchClientTo(tmuxTarget);
+    console.log(`[tmux] /api/term/focus -t ${tmuxTarget}:`, result);
+    return c.json({
+      ok: result.switched > 0,
+      switched: result.switched,
+      total: result.total,
+      target: tmuxTarget,
+      error: result.error,
+    });
+  });
+
   app.get("/api/sessions", (c) => c.json(getSessionsSnapshot()));
 
   app.post("/api/sessions/refresh", async (c) => {

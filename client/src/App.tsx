@@ -232,7 +232,11 @@ export function App() {
       <main className="content">
         {terminalVisited && (
           <div style={{ display: tab === "terminal" ? "block" : "none", height: "100%" }}>
-            <TerminalTab termPort={server.termPort} termPinned={server.termPinned} />
+            <TerminalTab
+              termPort={server.termPort}
+              termPinned={server.termPinned}
+              voiceConnected={voice.state.kind === "connected"}
+            />
           </div>
         )}
         {tab === "sessions" && (
