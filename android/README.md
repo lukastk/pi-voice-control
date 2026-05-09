@@ -13,7 +13,7 @@ You need Android Studio (Hedgehog or newer) with the Android SDK 34. Easiest:
 3. Plug in your phone with USB debugging enabled.
 4. Click **Run** (or `Shift+F10`).
 
-The first launch prompts for your URL — paste the `https://<tailnet>.ts.net/` from `bin/tailscale-serve.sh`. The URL persists in SharedPreferences. **Long-press the top-right corner of the WebView** to change it later.
+The first launch prompts you to enter at least one URL — paste the `https://<tailnet>.ts.net/` from `bin/tailscale-serve.sh`. The list persists in SharedPreferences along with the currently active selection. **Long-press the top-right corner of the WebView** to open the URLs dialog later — useful for keeping multiple servers (e.g. Mac + remote) and switching between them. Format: one entry per line, `Name | URL`. Tap a radio entry to make it the active URL the next time you save.
 
 ### Or from the command line
 

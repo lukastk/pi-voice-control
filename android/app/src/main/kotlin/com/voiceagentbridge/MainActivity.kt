@@ -11,17 +11,28 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
+import android.text.Editable
 import android.text.InputType
+import android.text.TextWatcher
 import android.view.View
+import android.view.ViewGroup
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.RadioButton
+import android.widget.RadioGroup
+import android.widget.ScrollView
+import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * Single-Activity host for the Voice Agent Bridge web UI.
@@ -185,36 +196,239 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun loadConfiguredUrl() {
-        val url = prefs.getString(KEY_URL, "")?.trim().orEmpty()
-        if (url.isEmpty()) {
+        val active = activeUrl()
+        if (active.isEmpty()) {
             promptForUrl()
             return
         }
-        webView.loadUrl(url)
+        webView.loadUrl(active)
     }
 
-    private fun promptForUrl() {
-        val input = EditText(this).apply {
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
-            setText(prefs.getString(KEY_URL, "https://"))
-            setSelection(text.length)
+    /**
+     * Resolve which URL we should currently load. Reads KEY_ACTIVE_URL
+     * first; if that's empty (fresh install or migration), seeds it
+     * from the entry list, falling back to the legacy KEY_URL single-
+     * string preference written by older builds. Empty string means
+     * "no URL configured yet — prompt the user".
+     */
+    private fun activeUrl(): String {
+        val saved = prefs.getString(KEY_ACTIVE_URL, "")?.trim().orEmpty()
+        if (saved.isNotEmpty()) return saved
+        val entries = loadEntries()
+        if (entries.isNotEmpty()) {
+            prefs.edit().putString(KEY_ACTIVE_URL, entries[0].url).apply()
+            return entries[0].url
         }
-        AlertDialog.Builder(this)
-            .setTitle("Voice Agent Bridge URL")
-            .setMessage(
-                "Enter the HTTPS URL the bin/tailscale-serve.sh script printed " +
-                    "(e.g. https://your-mac.tailnet.ts.net/).",
-            )
-            .setView(input)
-            .setPositiveButton("Connect") { _, _ ->
-                val url = input.text.toString().trim()
-                if (url.startsWith("https://") || url.startsWith("http://")) {
-                    prefs.edit().putString(KEY_URL, url).apply()
-                    webView.loadUrl(url)
+        // Migrate legacy single-URL key written by pre-multi-URL builds.
+        val legacy = prefs.getString(KEY_URL, "")?.trim().orEmpty()
+        if (legacy.isNotEmpty()) {
+            saveEntries(listOf(UrlEntry(deriveName(legacy), legacy)))
+            prefs.edit().putString(KEY_ACTIVE_URL, legacy).apply()
+            return legacy
+        }
+        return ""
+    }
+
+    /**
+     * Multi-URL picker dialog. Shows:
+     *   - a multiline EditText for the full list (one entry per line,
+     *     "Name | URL"), so you can paste/edit a fresh list quickly;
+     *   - a RadioGroup below it to pick which entry is currently
+     *     active. The radio list re-renders on every text change so
+     *     "what you'd save" is always visible. The active selection
+     *     persists across edits when the URL is still in the list.
+     *
+     * On save we parse the text, persist the entry list as JSON, write
+     * the active URL, and reload the WebView if the active URL changed.
+     */
+    private fun promptForUrl() {
+        val initialEntries = loadEntries()
+        val initialActive = prefs.getString(KEY_ACTIVE_URL, "")?.trim().orEmpty()
+        val previousActiveUrl = if (webView.url != null) webView.url else null
+
+        val padding = (resources.displayMetrics.density * 16).toInt()
+
+        val editText = EditText(this).apply {
+            inputType =
+                InputType.TYPE_CLASS_TEXT or
+                    InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+                    InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            setText(entriesToText(initialEntries))
+            minLines = 4
+            setHorizontallyScrolling(false)
+            isVerticalScrollBarEnabled = true
+        }
+
+        val radioGroup = RadioGroup(this).apply {
+            orientation = RadioGroup.VERTICAL
+        }
+
+        // Renders the radio list from a parsed entry list. Tries to
+        // preserve the user's current radio selection across re-renders
+        // (so editing other lines in the EditText doesn't lose your
+        // active pick); falls back to the persisted active URL, then
+        // first entry.
+        fun renderRadios(parsed: List<UrlEntry>) {
+            val previouslyCheckedUrl = run {
+                val id = radioGroup.checkedRadioButtonId
+                if (id == -1) initialActive
+                else (radioGroup.findViewById<RadioButton>(id)?.tag as? String) ?: initialActive
+            }
+            radioGroup.removeAllViews()
+            for (entry in parsed) {
+                val rb = RadioButton(this).apply {
+                    id = View.generateViewId()
+                    text = "${entry.name} — ${entry.url}"
+                    tag = entry.url
+                    isChecked = entry.url == previouslyCheckedUrl
+                }
+                radioGroup.addView(rb)
+            }
+            if (radioGroup.checkedRadioButtonId == -1 && radioGroup.childCount > 0) {
+                (radioGroup.getChildAt(0) as RadioButton).isChecked = true
+            }
+        }
+
+        renderRadios(initialEntries)
+
+        editText.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                renderRadios(parseEntries(s?.toString() ?: ""))
+            }
+        })
+
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(padding, padding / 2, padding, 0)
+        }
+
+        val instructions = TextView(this).apply {
+            text =
+                "One entry per line, format: Name | URL\n\n" +
+                    "Example:\n" +
+                    "Mac | https://my-mac.tailnet.ts.net/\n" +
+                    "Server | https://my-server.tailnet.ts.net/"
+            textSize = 12f
+            setPadding(0, 0, 0, padding / 2)
+        }
+        val activeLabel = TextView(this).apply {
+            text = "Active:"
+            setPadding(0, padding, 0, padding / 4)
+        }
+
+        container.addView(instructions)
+        container.addView(
+            editText,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+        container.addView(activeLabel)
+        container.addView(radioGroup)
+
+        val scroll = ScrollView(this).apply { addView(container) }
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Voice Agent Bridge URLs")
+            .setView(scroll)
+            .setPositiveButton("Save", null)
+            .setNegativeButton("Cancel", null)
+            .create()
+
+        // Override Save click ourselves so empty-list errors keep the
+        // dialog open instead of dismissing on every press.
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val parsed = parseEntries(editText.text.toString())
+                if (parsed.isEmpty()) {
+                    Toast.makeText(
+                        this,
+                        "Add at least one URL — format: Name | URL",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                    return@setOnClickListener
+                }
+                val checkedId = radioGroup.checkedRadioButtonId
+                val checkedTag =
+                    if (checkedId != -1) {
+                        radioGroup.findViewById<RadioButton>(checkedId)?.tag as? String
+                    } else null
+                val newActive = checkedTag ?: parsed[0].url
+                saveEntries(parsed)
+                prefs.edit().putString(KEY_ACTIVE_URL, newActive).apply()
+                if (newActive != previousActiveUrl) {
+                    webView.loadUrl(newActive)
+                }
+                dialog.dismiss()
+            }
+        }
+        dialog.show()
+    }
+
+    private data class UrlEntry(val name: String, val url: String)
+
+    /** Parse the EditText contents into entries. One per line; the
+     *  separator is the first '|' in the line (URLs don't contain '|'
+     *  so this is unambiguous). Lines without a name fall back to a
+     *  hostname-derived name. Lines without a URL-shaped second half
+     *  are dropped silently — the radio list reflects what's valid. */
+    private fun parseEntries(text: String): List<UrlEntry> {
+        return text.lines()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .mapNotNull { line ->
+                val pipe = line.indexOf('|')
+                if (pipe >= 0) {
+                    val name = line.substring(0, pipe).trim()
+                    val url = line.substring(pipe + 1).trim()
+                    if (url.startsWith("http://") || url.startsWith("https://")) {
+                        UrlEntry(name.ifEmpty { deriveName(url) }, url)
+                    } else null
+                } else {
+                    if (line.startsWith("http://") || line.startsWith("https://")) {
+                        UrlEntry(deriveName(line), line)
+                    } else null
                 }
             }
-            .setNegativeButton("Cancel", null)
-            .show()
+    }
+
+    private fun entriesToText(entries: List<UrlEntry>): String {
+        return entries.joinToString("\n") { "${it.name} | ${it.url}" }
+    }
+
+    private fun loadEntries(): List<UrlEntry> {
+        val raw = prefs.getString(KEY_URL_ENTRIES, null)
+        if (!raw.isNullOrEmpty()) {
+            return try {
+                val arr = JSONArray(raw)
+                (0 until arr.length()).map {
+                    val obj = arr.getJSONObject(it)
+                    UrlEntry(obj.optString("name"), obj.optString("url"))
+                }.filter { it.url.isNotEmpty() }
+            } catch (_: Throwable) {
+                emptyList()
+            }
+        }
+        return emptyList()
+    }
+
+    private fun saveEntries(entries: List<UrlEntry>) {
+        val arr = JSONArray()
+        for (e in entries) {
+            arr.put(JSONObject().put("name", e.name).put("url", e.url))
+        }
+        prefs.edit().putString(KEY_URL_ENTRIES, arr.toString()).apply()
+    }
+
+    private fun deriveName(url: String): String {
+        return try {
+            Uri.parse(url).host ?: url
+        } catch (_: Throwable) {
+            url
+        }
     }
 
     override fun onDestroy() {
@@ -233,7 +447,14 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val PREFS = "voice_agent_bridge"
+        // Legacy single-URL pref written by older builds. Read once at
+        // startup for migration into KEY_URL_ENTRIES; never written.
         private const val KEY_URL = "url"
+        // JSON-encoded list of {name, url} entries.
+        private const val KEY_URL_ENTRIES = "url_entries"
+        // The currently-active URL — must match a `url` field in
+        // KEY_URL_ENTRIES, otherwise the picker resets to the first.
+        private const val KEY_ACTIVE_URL = "active_url"
         private const val KEY_BATTERY_PROMPT_SHOWN = "battery_prompt_shown"
         private const val REQ_RUNTIME = 1001
     }
