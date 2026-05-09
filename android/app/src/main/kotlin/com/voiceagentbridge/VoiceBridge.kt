@@ -228,11 +228,44 @@ class VoiceBridge(
                             "TrackUnsubscribed kind=${ev.track.kind} sid=${ev.publications.sid}",
                         )
                     }
+                    is RoomEvent.DataReceived -> {
+                        // Worker → client messages on the LiveKit data
+                        // channel: voice-state updates (e.g.
+                        // {kind:"voice-state", armed:true} for the
+                        // keyword-mode armed indicator). Mirrors how
+                        // WebTransport's RoomEvent.DataReceived listener
+                        // surfaces these to voice.ts. We parse here so
+                        // the JS side gets a real object inside the
+                        // envelope, matching WebTransport's emitted
+                        // shape.
+                        val topic = ev.topic ?: ""
+                        val text = try {
+                            String(ev.data, Charsets.UTF_8)
+                        } catch (t: Throwable) {
+                            Log.w(TAG, "DataReceived utf8 decode failed: ${t.message}")
+                            return@collect
+                        }
+                        val message = try {
+                            JSONObject(text)
+                        } catch (t: Throwable) {
+                            // Worker only ever sends JSON objects on this
+                            // channel today; non-JSON is treated as a
+                            // diagnostic and dropped silently rather than
+                            // crashing the bridge.
+                            Log.w(TAG, "DataReceived non-JSON on $topic: ${t.message}")
+                            return@collect
+                        }
+                        emit(
+                            "data",
+                            JSONObject()
+                                .put("topic", topic)
+                                .put("message", message),
+                        )
+                    }
                     else -> {
                         // RoomEvent.Connected fires too but we already emit
                         // "connected" deterministically when r.connect()
-                        // returns, to avoid sending duplicates. Data events
-                        // are wired in Phase 9.5.
+                        // returns, to avoid sending duplicates.
                     }
                 }
             }
