@@ -91,6 +91,7 @@ type KeywordConfig = {
   replay: string[];
   abort: string[];
   matchThreshold: number;
+  maxArmedSeconds: number;
 };
 
 type KeywordGatingConfig = {
@@ -142,6 +143,7 @@ const DEFAULT_KEYWORDS: KeywordConfig = {
   replay: ["Pi, say again"],
   abort: ["Pi, abort"],
   matchThreshold: 0.75,
+  maxArmedSeconds: 60,
 };
 
 let activeTurnMode: TurnMode = "vad";
@@ -829,6 +831,20 @@ export default defineAgent({
       }
     };
 
+    // Auto-scrap timer: if a keyword turn stays armed past
+    // activeKeywords.maxArmedSeconds, force-scrap it. Guards against
+    // accidentally armed sessions burning Deepgram billing while
+    // unattended (armed mode bypasses the VAD gate). Started on the
+    // false→true transition; cleared on the true→false transition or
+    // session shutdown.
+    let armedTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+    const clearArmedTimeout = () => {
+      if (armedTimeoutTimer) {
+        clearTimeout(armedTimeoutTimer);
+        armedTimeoutTimer = null;
+      }
+    };
+
     // Single mutator so every armed-state transition (start, end,
     // scrap, redo, abort) goes through one place that also announces
     // the change to the client. No-op if state is unchanged.
@@ -837,6 +853,22 @@ export default defineAgent({
       keywordArmed = next;
       diagLog("keyword armed state", { armed: next });
       publishVoiceState({ armed: next });
+      if (next) {
+        const seconds = activeKeywords.maxArmedSeconds;
+        if (seconds && seconds > 0) {
+          armedTimeoutTimer = setTimeout(() => {
+            armedTimeoutTimer = null;
+            // Re-check armed state in case a race with another
+            // disarm path beat us here. setArmed is idempotent
+            // anyway, but skip the side effects.
+            if (!keywordArmed) return;
+            diagLog("keyword armed timeout", { seconds });
+            performAction("scrap", "timeout");
+          }, seconds * 1000);
+        }
+      } else {
+        clearArmedTimeout();
+      }
     };
 
     // Common helper: clear the framework's transcript buffer by
@@ -853,7 +885,7 @@ export default defineAgent({
     };
 
     type Action = "start" | "end" | "scrap" | "redo" | "replay" | "abort";
-    type ActionSource = "keyword" | "ui";
+    type ActionSource = "keyword" | "ui" | "timeout";
 
     /** Apply a keyword-mode action regardless of how it was triggered.
      *  Used by both spoken-keyword detection (with its own dedup +

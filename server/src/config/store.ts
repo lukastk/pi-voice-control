@@ -71,6 +71,11 @@ export type Config = {
       // ~0.75 lets common STT mishearings match (e.g. "high come in" ≈
       // "pi come in"). Lower = more permissive but more false triggers.
       matchThreshold: number;
+      // Safety net: if a keyword turn stays armed this long without
+      // an end / scrap / redo / abort, auto-scrap it. Guards against
+      // accidentally armed sessions racking up Deepgram billing while
+      // unattended (armed mode bypasses the VAD gate). 0 = disabled.
+      maxArmedSeconds: number;
     };
     // VAD-gated STT for keyword mode. While disarmed (waiting for the
     // start phrase), audio is only forwarded to the cloud STT during
@@ -149,6 +154,7 @@ export const DEFAULTS: Config = {
       replay: ["Pi, say again"],
       abort: ["Pi, abort"],
       matchThreshold: 0.75,
+      maxArmedSeconds: 60,
     },
     keywordGating: {
       enabled: true,

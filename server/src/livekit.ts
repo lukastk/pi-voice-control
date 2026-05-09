@@ -54,6 +54,8 @@ export type KeywordConfig = {
   replay: string[];
   abort: string[];
   matchThreshold: number;
+  /** Auto-scrap an armed turn after this many seconds. 0 = disabled. */
+  maxArmedSeconds: number;
 };
 
 export type KeywordGatingConfig = {

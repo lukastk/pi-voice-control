@@ -45,6 +45,7 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
   const [keywordReplay, setKeywordReplay] = useState("Pi, say again");
   const [keywordAbort, setKeywordAbort] = useState("Pi, abort");
   const [keywordThreshold, setKeywordThreshold] = useState(0.75);
+  const [keywordMaxArmedSeconds, setKeywordMaxArmedSeconds] = useState(60);
   const [gatingEnabled, setGatingEnabled] = useState(true);
   const [gatingPrerollMs, setGatingPrerollMs] = useState(300);
   const [gatingHangoverMs, setGatingHangoverMs] = useState(600);
@@ -156,6 +157,7 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
     setKeywordReplay(arrayFromConfig(k?.replay, ["Pi, say again"]).join("\n"));
     setKeywordAbort(arrayFromConfig(k?.abort, ["Pi, abort"]).join("\n"));
     setKeywordThreshold(k?.matchThreshold ?? 0.75);
+    setKeywordMaxArmedSeconds(k?.maxArmedSeconds ?? 60);
     const g = config.voice.keywordGating;
     setGatingEnabled(g?.enabled ?? true);
     setGatingPrerollMs(g?.prerollMs ?? 300);
@@ -188,6 +190,7 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
       JSON.stringify(splitKeywords(keywordReplay)) !== JSON.stringify(arrayFromConfig(config.voice.keywords?.replay, ["Pi, say again"])) ||
       JSON.stringify(splitKeywords(keywordAbort)) !== JSON.stringify(arrayFromConfig(config.voice.keywords?.abort, ["Pi, abort"])) ||
       keywordThreshold !== (config.voice.keywords?.matchThreshold ?? 0.75) ||
+      keywordMaxArmedSeconds !== (config.voice.keywords?.maxArmedSeconds ?? 60) ||
       gatingEnabled !== (config.voice.keywordGating?.enabled ?? true) ||
       gatingPrerollMs !== (config.voice.keywordGating?.prerollMs ?? 300) ||
       gatingHangoverMs !== (config.voice.keywordGating?.hangoverMs ?? 600) ||
@@ -198,7 +201,7 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
       micEnabled !== (config.voice.micEnabled ?? true) ||
       micDeviceId !== (config.voice.micDeviceId ?? null)
     );
-  }, [config, sttProvider, sttModel, sttLanguage, ttsProvider, ttsModel, ttsVoice, turnMode, keywordStart, keywordEnd, keywordScrap, keywordRedo, keywordReplay, keywordAbort, keywordThreshold, gatingEnabled, gatingPrerollMs, gatingHangoverMs, gatingActivationThreshold, gatingMinSpeechMs, gatingMinSilenceMs, gatingPrefixPaddingMs, micEnabled, micDeviceId]);
+  }, [config, sttProvider, sttModel, sttLanguage, ttsProvider, ttsModel, ttsVoice, turnMode, keywordStart, keywordEnd, keywordScrap, keywordRedo, keywordReplay, keywordAbort, keywordThreshold, keywordMaxArmedSeconds, gatingEnabled, gatingPrerollMs, gatingHangoverMs, gatingActivationThreshold, gatingMinSpeechMs, gatingMinSilenceMs, gatingPrefixPaddingMs, micEnabled, micDeviceId]);
 
   async function save(): Promise<boolean> {
     setError(null);
@@ -237,6 +240,7 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
             replay: splitKeywords(keywordReplay).length > 0 ? splitKeywords(keywordReplay) : ["Pi, say again"],
             abort: splitKeywords(keywordAbort).length > 0 ? splitKeywords(keywordAbort) : ["Pi, abort"],
             matchThreshold: keywordThreshold,
+            maxArmedSeconds: keywordMaxArmedSeconds,
           },
           keywordGating: {
             enabled: gatingEnabled,
@@ -619,6 +623,32 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
             distance — at 0.75, "high come in" still matches "Pi come in"; at 0.9 it
             doesn't. Lower the threshold if your STT keeps mishearing the wake phrase;
             raise it if random speech triggers it.
+          </p>
+        </Field>
+        <Field
+          label={
+            keywordMaxArmedSeconds === 0
+              ? "Auto-scrap armed turns: disabled"
+              : `Auto-scrap armed turns after: ${keywordMaxArmedSeconds}s`
+          }
+        >
+          <input
+            type="range"
+            min={0}
+            max={600}
+            step={10}
+            value={keywordMaxArmedSeconds}
+            onChange={(e) => setKeywordMaxArmedSeconds(parseInt(e.target.value, 10))}
+            style={{ width: "100%" }}
+          />
+          <p style={hintStyle}>
+            Safety net for accidentally armed sessions. If a keyword turn stays armed
+            (between the start phrase and end / scrap / redo / abort) for this long, the
+            worker auto-scraps it — drops any in-flight transcript, plays the scrap
+            earcon, and returns to idle. Critical because armed mode bypasses the VAD
+            gate and streams every audio frame to Deepgram. Drag to <code>0</code> to
+            disable. 60s suits typical commands; raise if you regularly compose long
+            messages.
           </p>
         </Field>
       </Section>

@@ -46,6 +46,8 @@ export type Config = {
       replay: string[];
       abort: string[];
       matchThreshold: number;
+      /** Auto-scrap armed turns after this many seconds. 0 = disabled. */
+      maxArmedSeconds?: number;
     };
     /** VAD-gated STT for keyword mode. Optional so a stale server
      *  pre-gating-schema doesn't blank the whole config. */
