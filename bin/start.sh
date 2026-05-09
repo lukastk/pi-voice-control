@@ -62,6 +62,17 @@ if [ ! -f client/dist/index.html ] || [ -z "${SKIP_CLIENT_BUILD:-}" ]; then
   (cd client && bun run build)
 fi
 
+# Build wterm's bundled client.js if missing. Unlike the client/, the
+# wterm bundle rarely changes, so we only build it on demand: server.mjs
+# reads dist/client.js synchronously at startup and crashes with ENOENT
+# if it's absent. Without this step a fresh checkout (or a `bun install`
+# that hasn't been followed up with a manual build) would loop-crash
+# under any process supervisor.
+if [ ! -f wterm/dist/client.js ]; then
+  echo -e "${YELLOW}building wterm...${NC}"
+  (cd wterm && bun run build)
+fi
+
 # --- process supervision -------------------------------------------------
 
 # Pre-flight: kill any leftover processes from a previous start.sh that
