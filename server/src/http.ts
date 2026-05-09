@@ -120,6 +120,7 @@ export function mountApi(app: Hono) {
         tts: cfg.voice.tts,
         turnMode: cfg.voice.turnMode,
         keywords: cfg.voice.keywords,
+        keywordGating: cfg.voice.keywordGating,
       });
       setCurrentTarget({
         socketPath,

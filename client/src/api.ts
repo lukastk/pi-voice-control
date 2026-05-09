@@ -47,6 +47,17 @@ export type Config = {
       abort: string[];
       matchThreshold: number;
     };
+    /** VAD-gated STT for keyword mode. Optional so a stale server
+     *  pre-gating-schema doesn't blank the whole config. */
+    keywordGating?: {
+      enabled: boolean;
+      prerollMs: number;
+      hangoverMs: number;
+      activationThreshold: number;
+      minSpeechDurationMs: number;
+      minSilenceDurationMs: number;
+      prefixPaddingMs: number;
+    };
     /** Optional in case server is older than the schema. */
     micEnabled?: boolean;
     micDeviceId?: string | null;

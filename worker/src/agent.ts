@@ -55,6 +55,7 @@ import {
   SPOKEN_TAG_PROMPT,
 } from "./text.ts";
 import { playEarcon, setEarconVolume } from "./earcons.ts";
+import { GatedSTT } from "./gated_stt.ts";
 
 type SpeechHandle = ReturnType<voice.AgentSession["say"]>;
 
@@ -92,6 +93,16 @@ type KeywordConfig = {
   matchThreshold: number;
 };
 
+type KeywordGatingConfig = {
+  enabled: boolean;
+  prerollMs: number;
+  hangoverMs: number;
+  activationThreshold: number;
+  minSpeechDurationMs: number;
+  minSilenceDurationMs: number;
+  prefixPaddingMs: number;
+};
+
 type JobMetadata = {
   socketPath: string;
   appendSystemPrompt?: string; // overrides default if provided
@@ -100,6 +111,17 @@ type JobMetadata = {
   tts?: TtsConfig;
   turnMode?: TurnMode;
   keywords?: KeywordConfig;
+  keywordGating?: KeywordGatingConfig;
+};
+
+const DEFAULT_KEYWORD_GATING: KeywordGatingConfig = {
+  enabled: true,
+  prerollMs: 300,
+  hangoverMs: 600,
+  activationThreshold: 0.5,
+  minSpeechDurationMs: 50,
+  minSilenceDurationMs: 550,
+  prefixPaddingMs: 500,
 };
 
 const DEFAULT_EARCONS: EarconConfig = {
@@ -633,8 +655,14 @@ export default defineAgent({
 
     pi.appendSystemPrompt(meta.appendSystemPrompt ?? SPOKEN_TAG_PROMPT);
 
+    // Hoisted ahead of STT construction so the GatedSTT bypass closure
+    // can read it. Flipped true between start-keyword detection and turn
+    // commit; while true the gate is bypassed (every frame goes to
+    // Deepgram) so quiet words mid-command can't be VAD-gated out.
+    let keywordArmed = false;
+
     const sttCfg = meta.stt ?? { provider: "openai-whisper", model: "whisper-1", language: "en" };
-    const stt =
+    const baseStt =
       sttCfg.provider === "deepgram"
         ? new DeepgramSTT({
             model: (sttCfg.model || "nova-3") as any,
@@ -644,7 +672,49 @@ export default defineAgent({
             model: (sttCfg.model || "whisper-1") as any,
             language: sttCfg.language || "en",
           });
-    logger.info({ stt: sttCfg }, "[worker] STT configured");
+
+    // VAD-gate the STT in keyword mode + Deepgram. Keyword mode in
+    // particular streams audio whenever the room is open — without
+    // gating, a quiet workspace racks up Deepgram billing for silence.
+    // Other modes already commit short utterances explicitly, so the
+    // wrapper buys us nothing there.
+    const gatingCfg: KeywordGatingConfig = {
+      ...DEFAULT_KEYWORD_GATING,
+      ...(meta.keywordGating ?? {}),
+    };
+    const useGating =
+      activeTurnMode === "keyword" &&
+      sttCfg.provider === "deepgram" &&
+      gatingCfg.enabled;
+
+    if (useGating) {
+      // Apply user-tunable Silero options before any new stream is
+      // created. updateOptions also reaches existing streams (e.g. the
+      // framework's own VAD use), which is intentional — there's only
+      // one VAD instance per process, and the keyword-mode gating
+      // settings are the user's deliberate choice.
+      (ctx.proc.userData.vad as silero.VAD).updateOptions({
+        activationThreshold: gatingCfg.activationThreshold,
+        minSpeechDuration: gatingCfg.minSpeechDurationMs,
+        minSilenceDuration: gatingCfg.minSilenceDurationMs,
+        prefixPaddingDuration: gatingCfg.prefixPaddingMs,
+      });
+    }
+
+    const stt = useGating
+      ? new GatedSTT({
+          inner: baseStt,
+          vad: ctx.proc.userData.vad as silero.VAD,
+          prerollMs: gatingCfg.prerollMs,
+          hangoverMs: gatingCfg.hangoverMs,
+          isBypassed: () => keywordArmed,
+          onDiag: (msg, fields) => diagLog(msg, fields),
+        })
+      : baseStt;
+    logger.info(
+      { stt: sttCfg, gating: useGating ? gatingCfg : null },
+      "[worker] STT configured",
+    );
 
     const ttsCfg =
       meta.tts ?? {
@@ -729,7 +799,8 @@ export default defineAgent({
     // Keyword-mode state. The framework still runs STT in manual mode and
     // emits UserInputTranscribed (interim + final) — we just have to scan
     // those for the start/end phrases ourselves and call commitUserTurn().
-    let keywordArmed = false;
+    // (keywordArmed is declared above STT construction so the GatedSTT
+    // bypass closure can read it.)
     // Time-based dedup for replay. The replay phrase stays in the
     // framework's audioTranscript until commitUserTurn's downstream EOU
     // path clears it (a few hundred ms). Without this guard, every STT

@@ -72,6 +72,27 @@ export type Config = {
       // "pi come in"). Lower = more permissive but more false triggers.
       matchThreshold: number;
     };
+    // VAD-gated STT for keyword mode. While disarmed (waiting for the
+    // start phrase), audio is only forwarded to the cloud STT during
+    // VAD-detected speech windows — Deepgram bills per second of
+    // streamed audio, so silence costs nothing. Only takes effect when
+    // turnMode === "keyword" and stt.provider === "deepgram".
+    keywordGating: {
+      enabled: boolean;
+      // Ring-buffer length flushed to STT on START_OF_SPEECH. Recovers
+      // the leading phoneme that VAD's inference window misses. ~300ms
+      // is enough for Silero defaults; bump if "Pi" gets clipped.
+      prerollMs: number;
+      // After VAD reports end-of-speech, keep the gate open for this
+      // long. Bridges short pauses inside an utterance ("Pi… come in").
+      hangoverMs: number;
+      // Silero VAD knobs (passed to silero.VAD.updateOptions). All
+      // optional; defaults are Silero's own defaults.
+      activationThreshold: number;     // 0..1, default 0.5
+      minSpeechDurationMs: number;     // default 50
+      minSilenceDurationMs: number;    // default 550
+      prefixPaddingMs: number;         // Silero's own pre-trigger pad, default 500
+    };
     // Master mic toggle, orthogonal to turnMode. When false, the mic
     // stays muted regardless of mode (no STT, no agent attention) —
     // useful for short privacy windows without losing your VAD/KW
@@ -128,6 +149,15 @@ export const DEFAULTS: Config = {
       replay: ["Pi, say again"],
       abort: ["Pi, abort"],
       matchThreshold: 0.75,
+    },
+    keywordGating: {
+      enabled: true,
+      prerollMs: 300,
+      hangoverMs: 600,
+      activationThreshold: 0.5,
+      minSpeechDurationMs: 50,
+      minSilenceDurationMs: 550,
+      prefixPaddingMs: 500,
     },
     micEnabled: true,
     micDeviceId: null,

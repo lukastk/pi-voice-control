@@ -56,6 +56,16 @@ export type KeywordConfig = {
   matchThreshold: number;
 };
 
+export type KeywordGatingConfig = {
+  enabled: boolean;
+  prerollMs: number;
+  hangoverMs: number;
+  activationThreshold: number;
+  minSpeechDurationMs: number;
+  minSilenceDurationMs: number;
+  prefixPaddingMs: number;
+};
+
 export async function dispatchVoiceAgent(opts: {
   socketPath: string;
   appendSystemPrompt?: string;
@@ -65,6 +75,7 @@ export async function dispatchVoiceAgent(opts: {
   tts?: TtsConfig;
   turnMode?: TurnMode;
   keywords?: KeywordConfig;
+  keywordGating?: KeywordGatingConfig;
 }): Promise<DispatchResult> {
   const roomName = `voice-${cryptoRandomShort()}`;
   const identity = opts.identity ?? "user";
@@ -78,6 +89,7 @@ export async function dispatchVoiceAgent(opts: {
       tts: opts.tts,
       turnMode: opts.turnMode,
       keywords: opts.keywords,
+      keywordGating: opts.keywordGating,
     }),
   });
 

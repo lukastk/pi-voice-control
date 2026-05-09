@@ -45,6 +45,13 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
   const [keywordReplay, setKeywordReplay] = useState("Pi, say again");
   const [keywordAbort, setKeywordAbort] = useState("Pi, abort");
   const [keywordThreshold, setKeywordThreshold] = useState(0.75);
+  const [gatingEnabled, setGatingEnabled] = useState(true);
+  const [gatingPrerollMs, setGatingPrerollMs] = useState(300);
+  const [gatingHangoverMs, setGatingHangoverMs] = useState(600);
+  const [gatingActivationThreshold, setGatingActivationThreshold] = useState(0.5);
+  const [gatingMinSpeechMs, setGatingMinSpeechMs] = useState(50);
+  const [gatingMinSilenceMs, setGatingMinSilenceMs] = useState(550);
+  const [gatingPrefixPaddingMs, setGatingPrefixPaddingMs] = useState(500);
   const [micEnabled, setMicEnabled] = useState(true);
   const [micDeviceId, setMicDeviceId] = useState<string | null>(null);
   const [micDevices, setMicDevices] = useState<MediaDeviceInfo[]>([]);
@@ -149,6 +156,14 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
     setKeywordReplay(arrayFromConfig(k?.replay, ["Pi, say again"]).join("\n"));
     setKeywordAbort(arrayFromConfig(k?.abort, ["Pi, abort"]).join("\n"));
     setKeywordThreshold(k?.matchThreshold ?? 0.75);
+    const g = config.voice.keywordGating;
+    setGatingEnabled(g?.enabled ?? true);
+    setGatingPrerollMs(g?.prerollMs ?? 300);
+    setGatingHangoverMs(g?.hangoverMs ?? 600);
+    setGatingActivationThreshold(g?.activationThreshold ?? 0.5);
+    setGatingMinSpeechMs(g?.minSpeechDurationMs ?? 50);
+    setGatingMinSilenceMs(g?.minSilenceDurationMs ?? 550);
+    setGatingPrefixPaddingMs(g?.prefixPaddingMs ?? 500);
     setMicEnabled(config.voice.micEnabled ?? true);
     setMicDeviceId(config.voice.micDeviceId ?? null);
   }, [config]);
@@ -173,10 +188,17 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
       JSON.stringify(splitKeywords(keywordReplay)) !== JSON.stringify(arrayFromConfig(config.voice.keywords?.replay, ["Pi, say again"])) ||
       JSON.stringify(splitKeywords(keywordAbort)) !== JSON.stringify(arrayFromConfig(config.voice.keywords?.abort, ["Pi, abort"])) ||
       keywordThreshold !== (config.voice.keywords?.matchThreshold ?? 0.75) ||
+      gatingEnabled !== (config.voice.keywordGating?.enabled ?? true) ||
+      gatingPrerollMs !== (config.voice.keywordGating?.prerollMs ?? 300) ||
+      gatingHangoverMs !== (config.voice.keywordGating?.hangoverMs ?? 600) ||
+      gatingActivationThreshold !== (config.voice.keywordGating?.activationThreshold ?? 0.5) ||
+      gatingMinSpeechMs !== (config.voice.keywordGating?.minSpeechDurationMs ?? 50) ||
+      gatingMinSilenceMs !== (config.voice.keywordGating?.minSilenceDurationMs ?? 550) ||
+      gatingPrefixPaddingMs !== (config.voice.keywordGating?.prefixPaddingMs ?? 500) ||
       micEnabled !== (config.voice.micEnabled ?? true) ||
       micDeviceId !== (config.voice.micDeviceId ?? null)
     );
-  }, [config, sttProvider, sttModel, sttLanguage, ttsProvider, ttsModel, ttsVoice, turnMode, keywordStart, keywordEnd, keywordScrap, keywordRedo, keywordReplay, keywordAbort, keywordThreshold, micEnabled, micDeviceId]);
+  }, [config, sttProvider, sttModel, sttLanguage, ttsProvider, ttsModel, ttsVoice, turnMode, keywordStart, keywordEnd, keywordScrap, keywordRedo, keywordReplay, keywordAbort, keywordThreshold, gatingEnabled, gatingPrerollMs, gatingHangoverMs, gatingActivationThreshold, gatingMinSpeechMs, gatingMinSilenceMs, gatingPrefixPaddingMs, micEnabled, micDeviceId]);
 
   async function save(): Promise<boolean> {
     setError(null);
@@ -215,6 +237,15 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
             replay: splitKeywords(keywordReplay).length > 0 ? splitKeywords(keywordReplay) : ["Pi, say again"],
             abort: splitKeywords(keywordAbort).length > 0 ? splitKeywords(keywordAbort) : ["Pi, abort"],
             matchThreshold: keywordThreshold,
+          },
+          keywordGating: {
+            enabled: gatingEnabled,
+            prerollMs: gatingPrerollMs,
+            hangoverMs: gatingHangoverMs,
+            activationThreshold: gatingActivationThreshold,
+            minSpeechDurationMs: gatingMinSpeechMs,
+            minSilenceDurationMs: gatingMinSilenceMs,
+            prefixPaddingMs: gatingPrefixPaddingMs,
           },
           micEnabled,
           micDeviceId,
@@ -588,6 +619,134 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
             distance — at 0.75, "high come in" still matches "Pi come in"; at 0.9 it
             doesn't. Lower the threshold if your STT keeps mishearing the wake phrase;
             raise it if random speech triggers it.
+          </p>
+        </Field>
+      </Section>
+
+      <Section title="Keyword mode — VAD gating (cost control)">
+        <p style={{ ...hintStyle, marginTop: 0 }}>
+          Only forward audio to Deepgram when on-device VAD detects speech.
+          Without this, keyword mode streams continuously and bills for silence
+          (~$11/day at Deepgram Nova-3 PAYG). With it, billed seconds drop to
+          roughly the time someone is talking nearby. Only applies in
+          <em> Keyword</em> mode with the <em>Deepgram</em> STT provider.
+        </p>
+        <Field label="Enabled">
+          <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <input
+              type="checkbox"
+              checked={gatingEnabled}
+              onChange={(e) => setGatingEnabled(e.target.checked)}
+            />
+            <span style={{ fontSize: 13 }}>Gate Deepgram on Silero VAD</span>
+          </label>
+        </Field>
+        <Field label={`Preroll: ${gatingPrerollMs} ms`}>
+          <input
+            type="range"
+            min={0}
+            max={1000}
+            step={50}
+            value={gatingPrerollMs}
+            disabled={!gatingEnabled}
+            onChange={(e) => setGatingPrerollMs(parseInt(e.target.value, 10))}
+            style={{ width: "100%" }}
+          />
+          <p style={hintStyle}>
+            How much audio leading up to the gate-open trigger gets flushed to
+            Deepgram. Recovers the leading phoneme of "Pi" that VAD inference
+            latency would otherwise clip. Bump if "Pi" gets mis-transcribed as
+            "eye" or dropped; lower if you don't care.
+          </p>
+        </Field>
+        <Field label={`Hangover: ${gatingHangoverMs} ms`}>
+          <input
+            type="range"
+            min={0}
+            max={2000}
+            step={50}
+            value={gatingHangoverMs}
+            disabled={!gatingEnabled}
+            onChange={(e) => setGatingHangoverMs(parseInt(e.target.value, 10))}
+            style={{ width: "100%" }}
+          />
+          <p style={hintStyle}>
+            After VAD reports end-of-speech, keep streaming this long before
+            closing the gate. Bridges short pauses inside an utterance ("Pi…
+            come in") so a single phrase isn't cut into two.
+          </p>
+        </Field>
+        <Field label={`VAD activation threshold: ${gatingActivationThreshold.toFixed(2)}`}>
+          <input
+            type="range"
+            min={0.1}
+            max={0.9}
+            step={0.05}
+            value={gatingActivationThreshold}
+            disabled={!gatingEnabled}
+            onChange={(e) => setGatingActivationThreshold(parseFloat(e.target.value))}
+            style={{ width: "100%" }}
+          />
+          <p style={hintStyle}>
+            Silero speech-probability threshold above which a frame is
+            considered speech. Lower = more sensitive (catches quiet speech but
+            triggers on background noise); higher = stricter (saves more cost
+            but may drop quiet wake-words). 0.5 is Silero's default.
+          </p>
+        </Field>
+        <Field label={`Min speech duration: ${gatingMinSpeechMs} ms`}>
+          <input
+            type="range"
+            min={20}
+            max={500}
+            step={10}
+            value={gatingMinSpeechMs}
+            disabled={!gatingEnabled}
+            onChange={(e) => setGatingMinSpeechMs(parseInt(e.target.value, 10))}
+            style={{ width: "100%" }}
+          />
+          <p style={hintStyle}>
+            How long sustained high-probability frames must persist before
+            Silero declares speech. Lower = faster gate-open but more false
+            positives from clicks/coughs. The preroll above is what actually
+            recovers the audio leading up to this trigger.
+          </p>
+        </Field>
+        <Field label={`Min silence duration: ${gatingMinSilenceMs} ms`}>
+          <input
+            type="range"
+            min={100}
+            max={2000}
+            step={50}
+            value={gatingMinSilenceMs}
+            disabled={!gatingEnabled}
+            onChange={(e) => setGatingMinSilenceMs(parseInt(e.target.value, 10))}
+            style={{ width: "100%" }}
+          />
+          <p style={hintStyle}>
+            How long Silero waits in silence before declaring end-of-speech.
+            This is separate from <em>hangover</em>: silence-duration is the
+            VAD's own end-of-speech debounce, hangover is how much longer the
+            gate stays open after that.
+          </p>
+        </Field>
+        <Field label={`Silero prefix padding: ${gatingPrefixPaddingMs} ms`}>
+          <input
+            type="range"
+            min={0}
+            max={1000}
+            step={50}
+            value={gatingPrefixPaddingMs}
+            disabled={!gatingEnabled}
+            onChange={(e) => setGatingPrefixPaddingMs(parseInt(e.target.value, 10))}
+            style={{ width: "100%" }}
+          />
+          <p style={hintStyle}>
+            Silero's own internal pre-trigger buffer. Distinct from the
+            wrapper's preroll above — this only affects what frames Silero
+            attaches to its own START_OF_SPEECH event (which the gate doesn't
+            consume directly). Usually leave at the default unless tuning
+            advanced behavior.
           </p>
         </Field>
       </Section>
