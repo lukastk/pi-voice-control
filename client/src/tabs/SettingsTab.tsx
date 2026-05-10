@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type Config, type ElevenLabsVoice } from "../api.ts";
 import {
+  listAndroidMicrophones,
+  type AndroidMicrophone,
+} from "../native-transport.ts";
+import {
   STT_MODELS,
   STT_LANGUAGES,
   TTS_MODELS,
@@ -56,11 +60,16 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
   const [gatingPrefixPaddingMs, setGatingPrefixPaddingMs] = useState(500);
   const [micEnabled, setMicEnabled] = useState(true);
   const [micDeviceId, setMicDeviceId] = useState<string | null>(null);
+  const [androidMicDeviceId, setAndroidMicDeviceId] = useState<string | null>(null);
   const [micDevices, setMicDevices] = useState<MediaDeviceInfo[]>([]);
+  const [androidMicDevices, setAndroidMicDevices] = useState<AndroidMicrophone[]>([]);
 
-  // Enumerate audio inputs on mount and on device changes. Labels are
-  // hidden until the page has had mic permission, so first-time users
-  // see generic IDs; after one connect, labels populate.
+  // Both dropdowns render on both platforms — the connect-time logic
+  // (NativeTransport vs WebTransport) already picks whichever field
+  // matches the runtime, so configuring the "other" platform's mic from
+  // the current one is a no-op locally and useful for cross-device setup.
+  // Note: listAndroidMicrophones() only returns entries when running
+  // inside the Android wrapper; on desktop it's [].
   useEffect(() => {
     if (typeof navigator === "undefined" || !navigator.mediaDevices) return;
     let cancelled = false;
@@ -81,6 +90,14 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
     };
   }, []);
 
+  // Android wrapper: enumerate hardware mics through the JS bridge.
+  // No devicechange equivalent exposed — the user can hit the refresh
+  // button below if they hot-plug a BT headset while the form is open.
+  const [androidMicTick, setAndroidMicTick] = useState(0);
+  useEffect(() => {
+    setAndroidMicDevices(listAndroidMicrophones());
+  }, [androidMicTick]);
+
   function splitKeywords(text: string): string[] {
     return text.split("\n").map((s) => s.trim()).filter(Boolean);
   }
@@ -88,6 +105,16 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
     if (Array.isArray(v)) return v;
     if (typeof v === "string" && v.trim()) return [v];
     return fallback;
+  }
+  function androidMicLabel(d: AndroidMicrophone): string {
+    // Most useful info first: typeName ("Bluetooth (SCO)") and the
+    // OEM-supplied product name when present. Fall back to address /
+    // id only when the rest is missing — addresses are rarely friendly
+    // (BT MACs, alsa device strings).
+    const parts: string[] = [d.typeName];
+    if (d.productName && d.productName !== d.typeName) parts.push(d.productName);
+    if (parts.length === 1 && d.address) parts.push(d.address);
+    return `${parts.join(" — ")} (id ${d.id})`;
   }
 
   const [savedAt, setSavedAt] = useState<number | null>(null);
@@ -170,6 +197,7 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
     setGatingPrefixPaddingMs(g?.prefixPaddingMs ?? 500);
     setMicEnabled(config.voice.micEnabled ?? true);
     setMicDeviceId(config.voice.micDeviceId ?? null);
+    setAndroidMicDeviceId(config.voice.androidMicDeviceId ?? null);
   }, [config]);
 
   // Did the user change any setting that only takes effect on next dispatch?
@@ -202,9 +230,10 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
       gatingMinSilenceMs !== (config.voice.keywordGating?.minSilenceDurationMs ?? 550) ||
       gatingPrefixPaddingMs !== (config.voice.keywordGating?.prefixPaddingMs ?? 500) ||
       micEnabled !== (config.voice.micEnabled ?? true) ||
-      micDeviceId !== (config.voice.micDeviceId ?? null)
+      micDeviceId !== (config.voice.micDeviceId ?? null) ||
+      androidMicDeviceId !== (config.voice.androidMicDeviceId ?? null)
     );
-  }, [config, sttProvider, sttModel, sttLanguage, sttVocabulary, ttsProvider, ttsModel, ttsVoice, turnMode, keywordStart, keywordEnd, keywordScrap, keywordRedo, keywordReplay, keywordAbort, keywordThreshold, keywordMaxArmedSeconds, gatingEnabled, gatingPrerollMs, gatingHangoverMs, gatingActivationThreshold, gatingMinSpeechMs, gatingMinSilenceMs, gatingPrefixPaddingMs, micEnabled, micDeviceId]);
+  }, [config, sttProvider, sttModel, sttLanguage, sttVocabulary, ttsProvider, ttsModel, ttsVoice, turnMode, keywordStart, keywordEnd, keywordScrap, keywordRedo, keywordReplay, keywordAbort, keywordThreshold, keywordMaxArmedSeconds, gatingEnabled, gatingPrerollMs, gatingHangoverMs, gatingActivationThreshold, gatingMinSpeechMs, gatingMinSilenceMs, gatingPrefixPaddingMs, micEnabled, micDeviceId, androidMicDeviceId]);
 
   async function save(): Promise<boolean> {
     setError(null);
@@ -257,6 +286,7 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
           },
           micEnabled,
           micDeviceId,
+          androidMicDeviceId,
         },
       });
       setSavedAt(Date.now());
@@ -501,7 +531,7 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
             </span>
           </label>
         </Field>
-        <Field label="Input device">
+        <Field label="Input device (web)">
           <select
             value={micDeviceId ?? ""}
             onChange={(e) => setMicDeviceId(e.target.value === "" ? null : e.target.value)}
@@ -515,10 +545,61 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
             ))}
           </select>
           <p style={hintStyle}>
-            Web only — the Android wrapper uses the system audio source. Device labels
-            stay hidden until the page has been granted microphone permission, so on
-            first load you may see generic IDs; after a successful Connect voice they
-            populate with real names. Changing the device requires a reconnect.
+            Used when this page is loaded in a browser (desktop or mobile web).
+            Device labels stay hidden until the page has been granted
+            microphone permission, so on first load you may see generic IDs;
+            after a successful Connect voice they populate with real names.
+            Changing the device requires a reconnect.
+          </p>
+        </Field>
+        <Field label="Input device (Android wrapper)">
+          <div style={{ display: "flex", gap: 8 }}>
+            <select
+              value={androidMicDeviceId ?? ""}
+              onChange={(e) =>
+                setAndroidMicDeviceId(e.target.value === "" ? null : e.target.value)
+              }
+              style={{ ...inputStyle, flex: 1 }}
+            >
+              <option value="">Default (let Android pick)</option>
+              {androidMicDevices.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {androidMicLabel(d)}
+                </option>
+              ))}
+              {androidMicDeviceId &&
+                !androidMicDevices.some((d) => d.id === androidMicDeviceId) && (
+                  <option value={androidMicDeviceId}>
+                    Saved id {androidMicDeviceId} (not currently visible)
+                  </option>
+                )}
+            </select>
+            <button
+              type="button"
+              onClick={() => setAndroidMicTick((n) => n + 1)}
+              style={{
+                padding: "6px 12px",
+                background: "#2a2a3a",
+                color: "#c8c8d4",
+                border: "1px solid #3a3a4a",
+                borderRadius: 4,
+                cursor: "pointer",
+                fontSize: 12,
+              }}
+            >
+              Refresh
+            </button>
+          </div>
+          <p style={hintStyle}>
+            Used when this page is loaded inside the sideloaded Android app —
+            kept separate from the web setting so one config can drive both
+            clients. The list only populates when viewed from inside the
+            wrapper itself; from a desktop browser the dropdown is empty, but
+            you can still clear or keep an existing selection. Hot-pluggable
+            mics (Bluetooth, USB, wired) get fresh IDs each time they
+            reconnect, so a saved entry that's no longer present silently
+            falls back to the OS default. Changing the device requires a
+            reconnect.
           </p>
         </Field>
       </Section>

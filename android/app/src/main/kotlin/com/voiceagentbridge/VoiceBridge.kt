@@ -1,5 +1,8 @@
 package com.voiceagentbridge
 
+import android.content.Context
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.util.Log
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
@@ -17,6 +20,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import livekit.org.webrtc.audio.JavaAudioDeviceModule
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -59,9 +64,10 @@ class VoiceBridge(
         roomName: String,
         identity: String,
         manualMode: Boolean,
+        micDeviceId: String,
     ): Boolean {
         // Don't log url/token — token is a JWT credential.
-        Log.i(TAG, "connect(room=$roomName, identity=$identity, manual=$manualMode)")
+        Log.i(TAG, "connect(room=$roomName, identity=$identity, manual=$manualMode, mic=${micDeviceId.ifEmpty { "default" }})")
         scope.launch {
             // Tear down anything left over from a previous session before
             // starting a new one — JS can race connect/disconnect during
@@ -74,6 +80,10 @@ class VoiceBridge(
                 attachListeners(r)
                 r.connect(url, token, options = ConnectOptions())
                 room = r
+                // Apply preferred input device (if any) before publishing
+                // the mic — the AudioRecord opened by setMicrophoneEnabled
+                // picks up the ADM's current preferred device.
+                applyPreferredInputDevice(r, micDeviceId)
                 // Publish (and set initial mute) before announcing
                 // "connected" so the JS layer sees a fully-set-up Room.
                 // Failure to publish is non-fatal: the Room is up, the
@@ -163,6 +173,36 @@ class VoiceBridge(
                 Log.w(TAG, "publishControl failed: ${t.message}", t)
             }
         }
+    }
+
+    /**
+     * Enumerate hardware audio input devices for the Settings UI's
+     * Android mic dropdown. Returns a JSON array of objects:
+     *   [{ id: "<int>", type: <int>, typeName: string, productName: string, address: string }]
+     *
+     * - `id` is AudioDeviceInfo.getId() stringified — that's what gets
+     *   stored in config.voice.androidMicDeviceId and looked up at
+     *   connect-time. IDs are stable enough for built-in devices but
+     *   change for hot-pluggable ones (BT/USB) on each reconnect; a
+     *   stale id falls back to OS default at connect time.
+     * - `typeName` is decoded from AudioDeviceInfo.TYPE_* constants so
+     *   the JS side can render a label without an Android lookup table.
+     */
+    @JavascriptInterface
+    fun listMicrophones(): String {
+        val am = activity.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val arr = JSONArray()
+        for (d in am.getDevices(AudioManager.GET_DEVICES_INPUTS)) {
+            arr.put(
+                JSONObject()
+                    .put("id", d.id.toString())
+                    .put("type", d.type)
+                    .put("typeName", audioDeviceTypeName(d.type))
+                    .put("productName", d.productName?.toString() ?: "")
+                    .put("address", d.address ?: ""),
+            )
+        }
+        return arr.toString()
     }
 
     @JavascriptInterface
@@ -270,6 +310,56 @@ class VoiceBridge(
                 }
             }
         }
+    }
+
+    /**
+     * Pin the WebRTC ADM to a specific hardware mic. Empty string means
+     * "let the OS pick." Stale ids (e.g. a Bluetooth headset that's no
+     * longer connected) silently fall back to the OS default — the user
+     * can re-pick from Settings if they care.
+     */
+    private fun applyPreferredInputDevice(r: Room, micDeviceId: String) {
+        if (micDeviceId.isEmpty()) return
+        val adm = r.lkObjects.audioDeviceModule as? JavaAudioDeviceModule
+        if (adm == null) {
+            Log.w(TAG, "ADM is not JavaAudioDeviceModule; cannot setPreferredInputDevice")
+            return
+        }
+        val targetId = micDeviceId.toIntOrNull()
+        if (targetId == null) {
+            Log.w(TAG, "androidMicDeviceId '$micDeviceId' not an int; ignoring")
+            return
+        }
+        val am = activity.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val match = am.getDevices(AudioManager.GET_DEVICES_INPUTS).firstOrNull { it.id == targetId }
+        if (match == null) {
+            Log.i(TAG, "preferred mic id=$targetId not present; using OS default")
+            return
+        }
+        try {
+            adm.setPreferredInputDevice(match)
+            Log.i(TAG, "preferred mic set: id=${match.id} type=${audioDeviceTypeName(match.type)} name=${match.productName}")
+        } catch (t: Throwable) {
+            Log.w(TAG, "setPreferredInputDevice failed: ${t.message}", t)
+        }
+    }
+
+    private fun audioDeviceTypeName(type: Int): String = when (type) {
+        AudioDeviceInfo.TYPE_BUILTIN_MIC -> "Built-in mic"
+        AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "Bluetooth (SCO)"
+        AudioDeviceInfo.TYPE_BLUETOOTH_A2DP -> "Bluetooth (A2DP)"
+        AudioDeviceInfo.TYPE_WIRED_HEADSET -> "Wired headset"
+        AudioDeviceInfo.TYPE_USB_DEVICE -> "USB device"
+        AudioDeviceInfo.TYPE_USB_HEADSET -> "USB headset"
+        AudioDeviceInfo.TYPE_USB_ACCESSORY -> "USB accessory"
+        AudioDeviceInfo.TYPE_TELEPHONY -> "Telephony"
+        AudioDeviceInfo.TYPE_FM_TUNER -> "FM tuner"
+        AudioDeviceInfo.TYPE_TV_TUNER -> "TV tuner"
+        AudioDeviceInfo.TYPE_DOCK -> "Dock"
+        AudioDeviceInfo.TYPE_LINE_ANALOG -> "Analog line-in"
+        AudioDeviceInfo.TYPE_LINE_DIGITAL -> "Digital line-in"
+        AudioDeviceInfo.TYPE_REMOTE_SUBMIX -> "Remote submix"
+        else -> "Type $type"
     }
 
     private fun disposeRoom() {

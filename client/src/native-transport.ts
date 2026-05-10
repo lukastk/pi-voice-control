@@ -17,6 +17,20 @@ import {
   type VoiceTransport,
 } from "./voice-transport.ts";
 
+/** Shape of items returned by AndroidVoiceBridge.listMicrophones(). */
+export type AndroidMicrophone = {
+  /** AudioDeviceInfo.id stringified — feed back through connect()'s micDeviceId. */
+  id: string;
+  /** Raw AudioDeviceInfo.TYPE_* constant. */
+  type: number;
+  /** Decoded type name (e.g. "Built-in mic", "Bluetooth (SCO)"). */
+  typeName: string;
+  /** OEM-supplied product name; may be empty. */
+  productName: string;
+  /** Hardware address (e.g. BT MAC); may be empty. */
+  address: string;
+};
+
 type AndroidVoiceBridge = {
   connect(
     url: string,
@@ -24,12 +38,36 @@ type AndroidVoiceBridge = {
     roomName: string,
     identity: string,
     manualMode: boolean,
+    /** AudioDeviceInfo.id stringified, or "" for OS default. */
+    micDeviceId: string,
   ): boolean;
   disconnect(): void;
   setMicMuted(muted: boolean): void;
   publishControl?(action: string): void;
+  /** Returns a JSON-encoded AndroidMicrophone[] string. Synchronous —
+   *  binder thread call into native. */
+  listMicrophones?(): string;
   getStateJson(): string;
 };
+
+/**
+ * Read the Android wrapper's hardware mic list. Returns [] when not
+ * running inside the wrapper or when the bridge predates this method
+ * (older sideloaded build). The Settings tab uses this to populate
+ * the Android-only "Input device" dropdown.
+ */
+export function listAndroidMicrophones(): AndroidMicrophone[] {
+  const bridge = typeof window !== "undefined" ? window.AndroidVoiceBridge : undefined;
+  if (!bridge?.listMicrophones) return [];
+  try {
+    const raw = bridge.listMicrophones();
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as AndroidMicrophone[]) : [];
+  } catch (err) {
+    console.warn("[native] listMicrophones parse failed", err);
+    return [];
+  }
+}
 
 type NativeEnvelope = { type: VoiceEvent["type"]; payload: any };
 
@@ -55,13 +93,18 @@ export class NativeTransport extends VoiceEventEmitter implements VoiceTransport
     dispatch,
     turnMode,
     micEnabled,
+    androidMicDeviceId,
   }: {
     dispatch: DispatchResult;
     turnMode: "vad" | "manual" | "keyword";
     micEnabled: boolean;
-    // micDeviceId is web-only — Android uses the system audio source —
-    // accepted in the type for symmetry but ignored here.
+    // Web-only field, accepted in the shared type for symmetry. The
+    // Android wrapper's analogue is androidMicDeviceId.
     micDeviceId: string | null;
+    // Android-only: AudioDeviceInfo.id of the preferred mic, or null
+    // for OS default. Passed through the JS bridge as "" when null
+    // because @JavascriptInterface doesn't carry JS null cleanly.
+    androidMicDeviceId: string | null;
   }): Promise<void> {
     const bridge = window.AndroidVoiceBridge;
     if (!bridge) {
@@ -78,6 +121,7 @@ export class NativeTransport extends VoiceEventEmitter implements VoiceTransport
       dispatch.roomName,
       "user",
       turnMode === "manual" || !micEnabled,
+      androidMicDeviceId ?? "",
     );
     if (!accepted) {
       throw new Error("native bridge rejected connect");

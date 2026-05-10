@@ -34,6 +34,10 @@ export class WebTransport extends VoiceEventEmitter implements VoiceTransport {
     turnMode: "vad" | "manual" | "keyword";
     micEnabled: boolean;
     micDeviceId: string | null;
+    // Android-only field, accepted for symmetry with the shared transport
+    // type. Ignored here — getUserMedia knows nothing about Android
+    // AudioDeviceInfo ids.
+    androidMicDeviceId: string | null;
   }): Promise<void> {
     // Secure-context preflight: getUserMedia is blocked on http:// from
     // any non-localhost host. Without this, the browser throws an opaque

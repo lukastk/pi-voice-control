@@ -121,6 +121,7 @@ export function App() {
       turnMode: server.config?.voice.turnMode ?? "vad",
       micEnabled: server.config?.voice.micEnabled ?? true,
       micDeviceId: server.config?.voice.micDeviceId ?? null,
+      androidMicDeviceId: server.config?.voice.androidMicDeviceId ?? null,
     });
   }
   const [resolveStatus, setResolveStatus] = useState<string | null>(null);

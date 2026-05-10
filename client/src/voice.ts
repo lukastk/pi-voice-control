@@ -28,6 +28,10 @@ type ConnectOptions = {
   micEnabled: boolean;
   /** Specific input device. null = browser/OS default. Web-transport only. */
   micDeviceId: string | null;
+  /** AudioDeviceInfo.id for the Android wrapper. null = OS default.
+   *  Native-transport only. Stored separately from micDeviceId so the
+   *  same config can drive both platforms without one stomping the other. */
+  androidMicDeviceId: string | null;
 };
 
 /**
@@ -155,6 +159,7 @@ export function useVoice() {
           turnMode: opts.turnMode,
           micEnabled: opts.micEnabled,
           micDeviceId: opts.micDeviceId,
+          androidMicDeviceId: opts.androidMicDeviceId,
         });
         transportRef.current = transport;
         setState({ kind: "connected", socketPath });

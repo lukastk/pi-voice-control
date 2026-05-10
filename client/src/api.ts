@@ -65,6 +65,9 @@ export type Config = {
     /** Optional in case server is older than the schema. */
     micEnabled?: boolean;
     micDeviceId?: string | null;
+    /** Android-only mic selection (AudioDeviceInfo.id). Optional so a
+     *  pre-schema server doesn't blank the form. */
+    androidMicDeviceId?: string | null;
   };
 };
 

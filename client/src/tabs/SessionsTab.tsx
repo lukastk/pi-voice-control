@@ -161,6 +161,7 @@ export function SessionsTab({ sessions, config, voice, onRefresh, resolveStatus 
                           turnMode: config?.voice.turnMode ?? "vad",
                           micEnabled: config?.voice.micEnabled ?? true,
                           micDeviceId: config?.voice.micDeviceId ?? null,
+                          androidMicDeviceId: config?.voice.androidMicDeviceId ?? null,
                         })
                       }
                       style={btnPrimary}

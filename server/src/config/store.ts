@@ -110,9 +110,15 @@ export type Config = {
     micEnabled: boolean;
     // Specific microphone device to capture from. null = browser
     // default. Populated by the Settings tab from
-    // navigator.mediaDevices.enumerateDevices(). Web-transport only;
-    // the Android wrapper uses the system audio source.
+    // navigator.mediaDevices.enumerateDevices(). Web-transport only —
+    // the Android wrapper has its own field below.
     micDeviceId: string | null;
+    // Android-only counterpart to micDeviceId. The string is the
+    // AudioDeviceInfo.id (stringified int) returned by
+    // AudioManager.getDevices(GET_DEVICES_INPUTS) on the device.
+    // Applied via JavaAudioDeviceModule.setPreferredInputDevice after
+    // the Room connects. null = let LiveKit/the OS pick.
+    androidMicDeviceId: string | null;
   };
 };
 
@@ -173,6 +179,7 @@ export const DEFAULTS: Config = {
     },
     micEnabled: true,
     micDeviceId: null,
+    androidMicDeviceId: null,
   },
 };
 
