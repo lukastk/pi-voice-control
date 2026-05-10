@@ -14,6 +14,10 @@ if ! command -v tailscale >/dev/null 2>&1; then
   echo "tailscale not found — install from https://tailscale.com/download"
   exit 1
 fi
+if ! command -v jq >/dev/null 2>&1; then
+  echo "jq not found — install via brew/apt"
+  exit 1
+fi
 
 if [ "${1:-}" = "--off" ] || [ "${1:-}" = "off" ]; then
   echo "tearing down tailscale serve…"
@@ -31,6 +35,7 @@ tailscale serve --bg --https=7880 http://localhost:7880
 echo ""
 tailscale serve status
 echo ""
-echo "Open https://$(tailscale status --json | bun -e 'let s=""; for await (const c of process.stdin) s+=c; const j=JSON.parse(s); console.log(j.Self?.DNSName?.replace(/\.$/, "") ?? "<your-tailnet>")')/ on your phone."
+dns=$(tailscale status --json | jq -r '.Self.DNSName // empty' | sed 's/\.$//')
+echo "Open https://${dns:-<your-tailnet>}/ on your phone."
 echo ""
 echo "Tear down with: $0 --off"
