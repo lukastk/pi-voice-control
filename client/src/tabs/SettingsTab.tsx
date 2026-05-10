@@ -31,6 +31,7 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
   const [sttProvider, setSttProvider] = useState<"openai-whisper" | "deepgram">("openai-whisper");
   const [sttModel, setSttModel] = useState("whisper-1");
   const [sttLanguage, setSttLanguage] = useState("en");
+  const [sttVocabulary, setSttVocabulary] = useState("");
   const [ttsProvider, setTtsProvider] = useState<"elevenlabs" | "openai" | "cartesia">("elevenlabs");
   const [ttsModel, setTtsModel] = useState("eleven_flash_v2_5");
   const [ttsVoice, setTtsVoice] = useState("CwhRBWXzGAHq8TQ4Fs17");
@@ -140,6 +141,7 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
     setSttProvider(config.voice.stt.provider);
     setSttModel(config.voice.stt.model);
     setSttLanguage(config.voice.stt.language);
+    setSttVocabulary(arrayFromConfig(config.voice.stt.vocabulary, []).join("\n"));
     setTtsProvider(config.voice.tts.provider);
     setTtsModel(config.voice.tts.model);
     setTtsVoice(config.voice.tts.voiceId);
@@ -179,6 +181,7 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
       sttProvider !== config.voice.stt.provider ||
       sttModel !== config.voice.stt.model ||
       sttLanguage !== config.voice.stt.language ||
+      JSON.stringify(splitKeywords(sttVocabulary)) !== JSON.stringify(arrayFromConfig(config.voice.stt.vocabulary, [])) ||
       ttsProvider !== config.voice.tts.provider ||
       ttsModel !== config.voice.tts.model ||
       ttsVoice !== config.voice.tts.voiceId ||
@@ -201,7 +204,7 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
       micEnabled !== (config.voice.micEnabled ?? true) ||
       micDeviceId !== (config.voice.micDeviceId ?? null)
     );
-  }, [config, sttProvider, sttModel, sttLanguage, ttsProvider, ttsModel, ttsVoice, turnMode, keywordStart, keywordEnd, keywordScrap, keywordRedo, keywordReplay, keywordAbort, keywordThreshold, keywordMaxArmedSeconds, gatingEnabled, gatingPrerollMs, gatingHangoverMs, gatingActivationThreshold, gatingMinSpeechMs, gatingMinSilenceMs, gatingPrefixPaddingMs, micEnabled, micDeviceId]);
+  }, [config, sttProvider, sttModel, sttLanguage, sttVocabulary, ttsProvider, ttsModel, ttsVoice, turnMode, keywordStart, keywordEnd, keywordScrap, keywordRedo, keywordReplay, keywordAbort, keywordThreshold, keywordMaxArmedSeconds, gatingEnabled, gatingPrerollMs, gatingHangoverMs, gatingActivationThreshold, gatingMinSpeechMs, gatingMinSilenceMs, gatingPrefixPaddingMs, micEnabled, micDeviceId]);
 
   async function save(): Promise<boolean> {
     setError(null);
@@ -225,6 +228,7 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
             provider: sttProvider,
             model: sttModel || STT_DEFAULT_MODEL[sttProvider],
             language: sttLanguage || "en",
+            vocabulary: splitKeywords(sttVocabulary),
           },
           tts: {
             provider: ttsProvider,
@@ -395,6 +399,22 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
             ))}
           </select>
           <p style={hintStyle}>ISO 639-1 code, or "multi" for auto-detect on Deepgram.</p>
+        </Field>
+        <Field label="Custom vocabulary">
+          <textarea
+            value={sttVocabulary}
+            onChange={(e) => setSttVocabulary(e.target.value)}
+            placeholder="boxyard&#10;livekit&#10;sherpa-onnx"
+            rows={4}
+            style={{ ...inputStyle, fontFamily: "ui-monospace, monospace", resize: "vertical" }}
+          />
+          <p style={hintStyle}>
+            Proper nouns, project names, jargon — one per line. Helps STT render uncommon terms
+            correctly (e.g. "boxyard" not "box yard"). On Deepgram Nova-3 this is sent as
+            <code> keyterm </code>(English only); on older Deepgram models as
+            <code> keywords </code>(any language). On Whisper it's joined into the
+            <code> prompt </code>parameter as a soft bias. Up to 100 terms.
+          </p>
         </Field>
       </Section>
 

@@ -28,6 +28,8 @@ export type Config = {
       provider: "openai-whisper" | "deepgram";
       model: string;
       language: string;
+      /** Optional in case a stale server doesn't ship the field yet. */
+      vocabulary?: string[];
     };
     tts: {
       provider: "elevenlabs" | "openai" | "cartesia";

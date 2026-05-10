@@ -38,6 +38,11 @@ export type Config = {
       provider: "openai-whisper" | "deepgram";
       model: string;       // openai: "whisper-1"; deepgram: "nova-3" / "nova-2-general"
       language: string;    // ISO code, e.g. "en"
+      // Custom vocabulary — proper nouns, project names, jargon that
+      // generic STT mis-renders ("boxyard" → "box yard"). One entry
+      // per term/phrase. Forwarded as Deepgram keyterm+keywords or
+      // Whisper prompt.
+      vocabulary: string[];
     };
     tts: {
       provider: "elevenlabs" | "openai" | "cartesia";
@@ -139,6 +144,7 @@ export const DEFAULTS: Config = {
       provider: "openai-whisper",
       model: "whisper-1",
       language: "en",
+      vocabulary: [],
     },
     tts: {
       provider: "elevenlabs",
@@ -221,6 +227,15 @@ function normalize(cfg: Config): Config {
     if ((v as string[]).length === 0) v = [...(DEFAULTS.voice.keywords[slot] as string[])];
     k[slot] = v;
   }
+  // STT vocabulary: array of trimmed non-empty strings; empty list is
+  // valid (means "no custom vocab"), distinct from the keyword slots
+  // above which fall back to defaults when emptied.
+  const stt = cfg.voice.stt as Record<string, unknown>;
+  let vocab = stt.vocabulary;
+  if (typeof vocab === "string") vocab = [vocab];
+  if (!Array.isArray(vocab)) vocab = [];
+  vocab = (vocab as unknown[]).map((s) => String(s).trim()).filter(Boolean);
+  stt.vocabulary = vocab;
   return cfg;
 }
 

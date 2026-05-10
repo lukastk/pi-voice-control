@@ -73,6 +73,7 @@ type SttConfig = {
   provider: "openai-whisper" | "deepgram";
   model: string;
   language: string;
+  vocabulary?: string[];
 };
 
 type TtsConfig = {
@@ -664,15 +665,27 @@ export default defineAgent({
     let keywordArmed = false;
 
     const sttCfg = meta.stt ?? { provider: "openai-whisper", model: "whisper-1", language: "en" };
+    // Custom vocabulary. Both providers expose a way to bias toward
+    // proper nouns/jargon. We send the same list either way; provider
+    // adapter below picks the right param.
+    const vocab = (sttCfg.vocabulary ?? []).filter((s): s is string => typeof s === "string" && s.trim().length > 0);
     const baseStt =
       sttCfg.provider === "deepgram"
         ? new DeepgramSTT({
             model: (sttCfg.model || "nova-3") as any,
             language: sttCfg.language || "en",
+            // keyterm: Nova-3 (English-only). keywords: older models
+            // (all languages, default weight 1). Send both — Deepgram
+            // ignores whichever doesn't apply for the chosen model.
+            keyterm: vocab,
+            keywords: vocab.map((t) => [t, 1] as [string, number]),
           })
         : new OpenAISTT({
             model: (sttCfg.model || "whisper-1") as any,
             language: sttCfg.language || "en",
+            // Whisper soft-bias via prompt. Comma-separated proper
+            // nouns is the documented pattern.
+            ...(vocab.length > 0 ? { prompt: vocab.join(", ") } : {}),
           });
 
     // VAD-gate the STT in keyword mode + Deepgram. Keyword mode in

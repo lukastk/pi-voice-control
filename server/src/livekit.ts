@@ -36,6 +36,7 @@ export type SttConfig = {
   provider: "openai-whisper" | "deepgram";
   model: string;
   language: string;
+  vocabulary?: string[];
 };
 
 export type TtsConfig = {

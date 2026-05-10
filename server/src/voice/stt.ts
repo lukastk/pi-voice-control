@@ -33,6 +33,15 @@ async function transcribeDeepgram(opts: {
     language: opts.config.language || "en",
     smart_format: "true",
   });
+  // Custom vocabulary. Send both forms so the request works regardless
+  // of model: keyterm is Nova-3's parameter (English only, no weight),
+  // keywords is the older parameter (term:weight, all languages).
+  // Deepgram ignores whichever doesn't apply for the chosen model.
+  for (const term of opts.config.vocabulary ?? []) {
+    if (!term) continue;
+    params.append("keyterm", term);
+    params.append("keywords", `${term}:1`);
+  }
   const res = await fetch(`https://api.deepgram.com/v1/listen?${params}`, {
     method: "POST",
     headers: {
@@ -70,6 +79,10 @@ async function transcribeWhisper(opts: {
   form.append("file", blob, `audio.${ext}`);
   form.append("model", opts.config.model || "whisper-1");
   if (opts.config.language) form.append("language", opts.config.language);
+  // Whisper biases recognition toward words appearing in `prompt`.
+  // Comma-separated proper nouns is the documented pattern.
+  const vocab = (opts.config.vocabulary ?? []).filter(Boolean);
+  if (vocab.length > 0) form.append("prompt", vocab.join(", "));
   const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}` },
