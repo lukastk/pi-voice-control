@@ -1,129 +1,182 @@
-# Voice Agent Bridge
+# CLAUDE.md
 
-A standalone voice conversation server — speak to your coding agents (Pi, Claude Code, Codex) like ChatGPT Voice Mode. API-first: any client (phone, desktop, CLI) can connect.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## What This Is
 
-An API server that sits between you and your coding agents:
+A voice conversation bridge for Pi coding agent sessions — speak to your Pi sessions running in tmux from a phone or browser. Multi-process architecture built around LiveKit for voice transport: a Bun HTTP server, a LiveKit agent worker, a React UI, an embedded terminal renderer (wterm), and a thin Android wrapper for screen-off voice.
 
 ```
-You (voice) ←→ Voice API Server ←→ Agents (Pi/Claude/Codex)
-                     ↕
-               Filter LLM (summarizes agent output for speech)
+┌──────────────────────────────────┐         ┌────────────────────────┐
+│  Browser / Android wrapper       │         │  tmux -L mysystem      │
+│  ┌────────────────────────────┐  │         │  ┌──────────────────┐  │
+│  │ React UI (Sessions / Term  │  │         │  │ pi (rpc-socket)  │  │
+│  │  / Prompt / Settings)      │  │         │  │ pi (rpc-socket)  │  │
+│  └────────────────────────────┘  │         │  └──────┬───────────┘  │
+│  ┌────────────────────────────┐  │         │         │ unix sockets │
+│  │ LiveKit transport          │◀─┼─audio───┼─┐       ▼              │
+│  │   (web SDK / native SDK)   │  │         │ │  /tmp/pi-rpc-sockets │
+│  └────────────────────────────┘  │         │ │                      │
+└──────────┬───────────────────────┘         │ │  ┌────────────────┐  │
+           │ HTTPS (Tailscale)                 │ │  │ wterm (tmux pty│  │
+           ▼                                   │ │  │  WebSocket UI) │  │
+┌──────────────────────────────┐  ──REST/SSE──▶│ │  └────────────────┘  │
+│  server/  (Bun, port 7890)   │               │ │                      │
+│  ─ session poller            │  ──dispatch──▶│ │  ┌────────────────┐  │
+│  ─ wterm switch (port 7891)  │               │ │  │ worker/        │  │
+│  ─ LiveKit token / dispatch  │               │ └──│  LiveKit agent │  │
+│  ─ Pi prompt injection       │               │    │  STT/TTS/Pi RPC│  │
+└──────────────────────────────┘               └────┴────────────────┘
 ```
 
-1. You speak → STT transcribes → sends text to agent
-2. Agent works (may take seconds for tool calls) → response comes back
-3. Filter LLM converts technical response to natural speech → TTS speaks it
-4. You can interrupt at any time (kills TTS, captures your speech, redirects agent)
+You start `pi` sessions yourself in tmux. The server discovers them via the `rpc-socket` extension; you pick one in the UI; the worker connects, transcribes your voice, sends it to that Pi session, and speaks the reply back.
 
-## API
+## Requirements
 
-The server exposes REST, WebSocket, and SSE endpoints. No built-in UI — clients are separate.
+- **Bun** ≥ 1.3 and **Node** ≥ 20
+- **`tmux`**, **`livekit-server`** (binary on PATH), **`pi`** (the AI coding agent)
+- The **`rpc-socket`** Pi extension installed under `~/.pi/agent/extensions/`
+- For voice: API keys (see Env vars). Minimum useful set is `OPENAI_API_KEY` (STT) + `ELEVENLABS_API_KEY` (TTS), or `DEEPGRAM_API_KEY` instead of OpenAI for streaming STT.
 
-- **`/ws/audio`** — bidirectional audio stream (PCM in, TTS audio + JSON events out)
-- **`/ws/text`** — text-only mode
-- **`POST /sessions`** — start a session with an agent
-- **`POST /sessions/:id/converse`** — send text/audio, get response
-- **`GET /sessions/:id/events`** — SSE event stream (status, transcript, tool use)
-- **`GET /agents`** — list available agents
+## Common Commands
 
-## Agent Adapters
+```bash
+# Install dependencies
+bun install
 
-| Agent | Interface | Streaming | Interruption | Key Feature |
-|---|---|---|---|---|
-| **Pi** | RPC mode (`pi --mode rpc`, JSONL stdin/stdout) | Yes (text_delta) | `steer` command | Redirect agent mid-response |
-| **Claude Code** | Agent SDK (`@anthropic-ai/claude-agent-sdk`) | Yes (partial messages) | `interrupt()` | Tool call events |
-| **Codex** | SDK (`@openai/codex-sdk`) | Yes (runStreamed) | Thread management | Resume threads |
-| **Generic CLI** | Print mode (`<agent> -p "prompt"`) | No | Kill process | Works with anything |
+# Full local dev (starts livekit-server, worker, HTTP server)
+bin/start.sh
 
-## Voice Pipeline
+# Start individual components
+cd server && bun run dev       # Bun HTTP server on port 7890 (--hot)
+cd worker && bun run dev       # LiveKit agent worker (tsx, dev mode)
+cd client && bun run dev       # Vite dev server for React UI
 
-### STT (Speech-to-Text)
+# Build client (for production serving)
+cd client && bun run build
 
-| Provider | Latency | Streaming | Cost/min |
-|---|---|---|---|
-| Deepgram Flux | <300ms end-of-turn | WebSocket | $0.0077 |
-| Groq Whisper | ~100ms processing | Batch (228x realtime) | $0.0007 |
-| sherpa-onnx | ~50ms/chunk | Local streaming | Free |
-| OpenAI Whisper | ~940ms | Batch | $0.006 |
+# Build wterm bundle (needed before first run)
+cd wterm && bun run build
 
-### TTS (Text-to-Speech)
-
-| Provider | TTFB | Quality | Cost |
-|---|---|---|---|
-| Cartesia Sonic-3 | 90ms | Good | ~$0.01/min |
-| ElevenLabs Flash | 370ms | Best | $0.17-0.36/min |
-| Orpheus (local) | 100-200ms | Good | Free |
-| macOS `say` | 700ms | Robotic | Free |
-
-### Filter LLM (Summarization)
-
-Converts agent markdown/code output to natural spoken summaries.
-
-| Provider | Latency | Cost/call |
-|---|---|---|
-| Groq Llama 8B | ~160ms | $0.0001 |
-| Gemini Flash-Lite | ~300ms | $0.0002 |
-| Haiku 4.5 | ~400ms | $0.002 |
-
-### Total Pipeline Cost: ~$0.018/min (vs Vapi $0.08, OpenAI Realtime $0.30)
-
-## Tech Stack
-
-- **Server**: TypeScript on Bun (agent SDKs are all npm packages)
-- **Audio I/O**: ffmpeg/ffplay subprocesses (local), WebSocket + AudioWorklet (phone)
-- **VAD**: Silero VAD via sherpa-onnx-node
-- **Phone client**: Single HTML page served by the server, PWA-installable
+# Tailscale HTTPS (required for mobile mic)
+bin/tailscale-serve.sh         # Serve 7890, 7880, 7891 over Tailscale HTTPS
+bin/tailscale-serve.sh --off   # Tear down
+```
 
 ## Project Structure
 
-```
-voice-agent-bridge/
-├── src/
-│   ├── server.ts            # Bun HTTP/WebSocket server
-│   ├── session.ts           # Session management
-│   ├── api/                 # REST, WebSocket, SSE handlers
-│   ├── agents/              # Agent bridge adapters (Pi, Claude, Codex, generic)
-│   ├── voice/               # Pipeline orchestration, state machine, interruption
-│   ├── stt/                 # STT adapters (Deepgram, Groq, sherpa, OpenAI)
-│   ├── tts/                 # TTS adapters (Cartesia, ElevenLabs, Orpheus, say)
-│   ├── filter/              # Response summarization (Groq, Haiku, regex)
-│   ├── audio/               # Local mic/speaker via subprocesses
-│   ├── transport/           # Audio transport (local, WebSocket)
-│   └── vad/                 # Silero VAD, energy VAD
-├── client/                  # Phone web client (single HTML page + AudioWorklet)
-└── scratch/                 # Research artifacts
-```
+| Path | Role |
+|------|------|
+| `bin/start.sh` | Local dev supervisor — boots livekit-server, worker, server |
+| `bin/tailscale-serve.sh` | Configures `tailscale serve` for HTTPS |
+| `bin/tailscale-address.sh` | Retrieves the Tailnet HTTPS URL |
+| `server/` | Bun HTTP server (Hono): REST, SSE, session poller, LiveKit token, prompt injection |
+| `worker/` | LiveKit agent worker — Pi RPC bridge, STT/TTS, keyword detection, VAD-gated STT wrapper |
+| `client/` | React UI (Vite). Tabs in `client/src/tabs/`, two transports (`web-transport.ts` for browsers, `native-transport.ts` for the Android wrapper) |
+| `wterm/` | Standalone Node + xterm.js process that PTYs into tmux and serves the terminal UI on port 7891 |
+| `android/` | Android wrapper — WebView + native LiveKit Room + foreground service for screen-off voice |
+| `scratch/` | Research artifacts: STT/TTS/VAD comparisons, voice API deep-dives |
+
+### Server (`server/`)
+
+Bun HTTP server using Hono. Entry: `server/src/main.ts`. Key modules:
+- `server/src/sessions/` — Pi session discovery via rpc-socket polling
+- `server/src/livekit.ts` — LiveKit token generation and worker dispatch
+- `server/src/prompt/` — Voice prompt injection (reads `~/.pi/agent/AGENTS.voice.md`)
+- `server/src/term/` — Tmux pane switching, wterm management
+- `server/src/voice/` — Voice bridge init, prompt validation
+- `server/src/events/` — SSE event streaming
+- `server/src/http.ts` — REST API routes
+- `server/src/config/` — Server configuration
+
+### Worker (`worker/`)
+
+LiveKit agent using `@livekit/agents`. Entry: `worker/src/agent.ts`. Uses:
+- `@livekit/agents-plugin-deepgram` — streaming STT (primary, recommended for keyword mode)
+- `@livekit/agents-plugin-openai` — batch STT (Whisper)
+- `@livekit/agents-plugin-elevenlabs` — TTS (highest quality)
+- `@livekit/agents-plugin-cartesia` — TTS (lowest TTFB)
+- `@livekit/agents-plugin-silero` — local VAD for keyword-mode gating
+
+Worker diagnostic log: `/tmp/voice-bridge-worker.log`
+
+### Client (`client/`)
+
+React + Vite SPA. Two transport backends:
+- `client/src/web-transport.ts` — browser: LiveKit web SDK
+- `client/src/native-transport.ts` — Android wrapper: LiveKit native SDK via bridge
+
+UI tabs in `client/src/tabs/`: Terminal, Sessions, VoicePrompt, Settings, Test.
+
+## Turn Modes
+
+Voice can be driven three different ways. Switch modes in the Settings tab or via the `VAD`/`PTT`/`KW` badge in the top bar.
+
+| Mode | What it does | Best for |
+|------|-------------|---------|
+| **VAD** (default) | Auto-commits a turn after ~550 ms of silence | Quick back-and-forth, hands-free |
+| **Manual (PTT)** | Tap a button to start/stop recording | Noisy environments |
+| **Keyword** | Speak a wake phrase to start ("Pi, come in") and another to send ("Pi, that's all") | Long messages, walking around, dictation |
+
+### Keyword mode phrases (configurable)
+
+| Phrase (defaults) | Action |
+|-------------------|--------|
+| "Pi, come in" | Start a new message (arms the mic) |
+| "Pi, that's all" | Send the message |
+| "Pi, scrap that" | Discard the in-flight message |
+| "Pi, do over" | Discard and re-arm |
+| "Pi, say again" | Re-speak the last reply (only when idle) |
+| "Pi, abort" | Stop whatever Pi is doing right now |
+
+Keyword mode uses fuzzy matching with Levenshtein similarity. Configurable: VAD gating (Silero VAD speech detection to reduce idle Deepgram cost ~10–20×), auto-scrap timeout (default 60s), and match threshold.
 
 ## Env Vars
 
 | Var | For |
-|---|---|
-| `DEEPGRAM_API_KEY` | Primary STT |
-| `GROQ_API_KEY` | Fast STT + Filter LLM |
-| `CARTESIA_API_KEY` | Lowest-latency TTS |
-| `ELEVENLABS_API_KEY` | Highest-quality TTS |
-| `OPENAI_API_KEY` | Fallback STT/TTS |
-| `ANTHROPIC_API_KEY` | Claude agent + Haiku filter |
+|-----|-----|
+| `OPENAI_API_KEY` | Whisper STT (batch); also fallback TTS |
+| `DEEPGRAM_API_KEY` | Streaming STT (recommended for keyword mode) |
+| `ELEVENLABS_API_KEY` | TTS (highest quality). Mirrored to `ELEVEN_API_KEY` automatically |
+| `CARTESIA_API_KEY` | Alternative TTS (lowest TTFB) |
+| `LIVEKIT_URL` / `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` | Override the dev defaults (`ws://localhost:7880`, `devkey`, `secret`) |
+| `PORT` / `BIND` | HTTP server port (default 7890) and bind address (default 0.0.0.0) |
+| `WTERM_PORT` | wterm port (default 7891) |
+| `SKIP_CLIENT_BUILD` | Set to `1` to skip client rebuild on start (for fast restarts) |
 
-Minimum: `GROQ_API_KEY` + macOS `say`. Fully local: sherpa-onnx + Orpheus + Gemma (no API keys, higher latency).
+User config (turn mode, voice provider/model, keyword phrases, VAD knobs, etc.) is persisted in `~/.config/voice-agent-bridge/config.json`.
 
-## Implementation Phases
+## Logs
 
-1. **Core** — Bun server, Pi agent adapter, Deepgram STT, macOS `say`, regex strip, local audio
-2. **Better voice** — Cartesia/ElevenLabs TTS, Groq filter LLM, VAD interruption
-3. **More agents** — Claude Code + Codex adapters, generic CLI, auto-detection
-4. **Phone** — Web client with AudioWorklet, WebSocket transport, PWA
-5. **Polish** — Local STT/TTS, conversation memory, config UI, concurrent sessions
+- `/tmp/voice-bridge-worker.log` — worker diagnostics (the LiveKit framework forks each job, so this is the only reliable place to see per-session events)
+- `/tmp/voice-agent-bridge-livekit.log` — livekit-server stdout/stderr
+- Browser console — client-side voice transport events
+- `adb logcat | grep VoiceBridge` — Android wrapper bridge
 
-## Research Artifacts
+## Tailscale + HTTPS
 
-Detailed findings from hands-on testing in `scratch/`:
-- `realtime-voice-research.md` — Full comparison of voice APIs, STT/TTS providers, latency budgets
-- `agent-interface-research.md` — Claude Code, Pi, Codex CLI and SDK interfaces
-- `web-client-research.md` — Browser audio, WebSocket vs WebRTC, echo cancellation
-- `audio-findings.md` — macOS audio capture/playback tools (tested)
-- `stt-findings.md` — Deepgram, sherpa-onnx, OpenAI Whisper (tested)
-- `tts-findings.md` — ElevenLabs, OpenAI, Cartesia, Kokoro, macOS say (tested)
-- `transform-findings.md` — Regex stripping, spoken tag extraction, Pi events (tested)
+Mobile browsers refuse `getUserMedia` on `http://` for any non-localhost host. `tailscale serve` provides a real cert for your Tailnet hostname:
+
+```bash
+bin/tailscale-serve.sh         # serves 7890, 7880, 7891 over Tailscale HTTPS
+bin/tailscale-serve.sh --off   # tear it all down
+```
+
+Then open `https://<your-tailnet-name>/` on your phone. Re-run after every `tailscale up` since serve config doesn't always survive reboots on macOS.
+
+## Mobile Clients
+
+- **Browser PWA** — open the Tailscale URL on Android Chrome or iOS Safari, "Add to Home Screen". Chrome PWAs can't keep audio running with the screen off.
+- **Android wrapper** — at `android/`. WebView around the same React UI, plus a native LiveKit Room and a `microphone | mediaPlayback` foreground service that survives screen-off and battery optimization. Supports multiple server URLs via a picker (long-press the top-right corner).
+
+## Multi-Host Deployment
+
+You can run the server on as many machines as you like. Each instance owns its own `pi` sessions. The Android wrapper's URL picker lets a single phone hop between them. From the host's side: run `bin/start.sh` and `bin/tailscale-serve.sh` on each machine.
+
+## Conventions
+
+- **No linter configured** — TypeScript strict mode is the primary guardrail
+- **Bun** for the HTTP server (Hono), **tsx** for the worker (LiveKit agents ecosystem is Node.js-oriented)
+- **Vite** for the client build
+- `start.sh` is the root entry point; it forwards to `bin/start.sh`
+- Pi sessions are NOT owned by this repo — they must be started separately in `tmux -L mysystem`
