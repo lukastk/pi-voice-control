@@ -1,7 +1,3 @@
-# CLAUDE.md
-
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## What This Is
 
 A voice conversation bridge for Pi coding agent sessions — speak to your Pi sessions running in tmux from a phone or browser. Multi-process architecture built around LiveKit for voice transport: a Bun HTTP server, a LiveKit agent worker, a React UI, an embedded terminal renderer (wterm), and a thin Android wrapper for screen-off voice.
