@@ -69,9 +69,8 @@ bin/tailscale-serve.sh --off   # Tear down
 | `server/` | Bun HTTP server (Hono): REST, SSE, session poller, LiveKit token, prompt injection |
 | `worker/` | LiveKit agent worker — Pi RPC bridge, STT/TTS, keyword detection, VAD-gated STT wrapper |
 | `client/` | React UI (Vite). Tabs in `client/src/tabs/`, two transports (`web-transport.ts` for browsers, `native-transport.ts` for the Android wrapper) |
-| `wterm/` | Standalone Node + xterm.js process that PTYs into tmux and serves the terminal UI on port 7891 |
+| `wterm/` | Standalone Node + `@wterm` process (built on `@wterm/core` + `@wterm/dom`; sets PTY term type to `xterm-256color`) that PTYs into tmux and serves the terminal UI on port 7891 |
 | `android/` | Android wrapper — WebView + native LiveKit Room + foreground service for screen-off voice |
-| `scratch/` | Research artifacts: STT/TTS/VAD comparisons, voice API deep-dives |
 
 ### Server (`server/`)
 
@@ -135,10 +134,12 @@ Keyword mode uses fuzzy matching with Levenshtein similarity. Configurable: VAD 
 | `DEEPGRAM_API_KEY` | Streaming STT (recommended for keyword mode) |
 | `ELEVENLABS_API_KEY` | TTS (highest quality). Mirrored to `ELEVEN_API_KEY` automatically |
 | `CARTESIA_API_KEY` | Alternative TTS (lowest TTFB) |
+| `ELEVENLABS_VOICE_ID` | ElevenLabs voice (default `CwhRBWXzGAHq8TQ4Fs17`) |
 | `LIVEKIT_URL` / `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` | Override the dev defaults (`ws://localhost:7880`, `devkey`, `secret`) |
 | `PORT` / `BIND` | HTTP server port (default 7890) and bind address (default 0.0.0.0) |
 | `WTERM_PORT` | wterm port (default 7891) |
 | `SKIP_CLIENT_BUILD` | Set to `1` to skip client rebuild on start (for fast restarts) |
+| `REINSTALL` | Set to force `bun install` on start |
 
 User config (turn mode, voice provider/model, keyword phrases, VAD knobs, etc.) is persisted in `~/.config/voice-agent-bridge/config.json`.
 
