@@ -77,10 +77,13 @@ bin/tailscale-serve.sh --off   # Tear down
 Bun HTTP server using Hono. Entry: `server/src/main.ts`. Key modules:
 - `server/src/sessions/` — Pi session discovery via rpc-socket polling
 - `server/src/livekit.ts` — LiveKit token generation and worker dispatch
-- `server/src/prompt/` — Voice prompt injection (reads `~/.pi/agent/AGENTS.voice.md`)
-- `server/src/term/` — Tmux pane switching, wterm management
-- `server/src/voice/` — Voice bridge init, prompt validation
+- `server/src/prompt/` — Voice prompt injection (`default.ts`/`file.ts`/`inject.ts`; reads `~/.pi/agent/AGENTS.voice.md`)
+- `server/src/tmux/` — Tmux pane switching (e.g. `focus.ts`)
+- `server/src/term/` — wterm (embedded terminal) management
+- `server/src/voice/` — REST clients for the STT/TTS test endpoints (`/api/test/stt`, `/api/test/tts`)
 - `server/src/events/` — SSE event streaming
+- `server/src/state.ts` — In-memory server state
+- `server/src/util/` — Shared server utilities
 - `server/src/http.ts` — REST API routes
 - `server/src/config/` — Server configuration
 
@@ -101,7 +104,7 @@ React + Vite SPA. Two transport backends:
 - `client/src/web-transport.ts` — browser: LiveKit web SDK
 - `client/src/native-transport.ts` — Android wrapper: LiveKit native SDK via bridge
 
-UI tabs in `client/src/tabs/`: Terminal, Sessions, VoicePrompt, Settings, Test.
+UI tabs in `client/src/tabs/`: Terminal, Sessions, Voice prompt (`PromptTab`), Settings, Test.
 
 ## Turn Modes
 
