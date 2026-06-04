@@ -7,9 +7,10 @@ import {
   getPinned,
   setPinned,
 } from "./state.ts";
-import { getConfig, updateConfig, configPath } from "./config/store.ts";
+import { getConfig, updateConfig, configPath, type Config } from "./config/store.ts";
 import { getSessionsSnapshot, pollOnce } from "./sessions/poller.ts";
 import { findSessionByFolder } from "./sessions/select.ts";
+import { registerPiSession } from "./sessions/sesh.ts";
 import { spawnPiInFolder } from "./tmux/spawn.ts";
 import { switchClientTo, targetForSession } from "./tmux/focus.ts";
 import { publish, subscribe } from "./events/bus.ts";
@@ -21,6 +22,39 @@ import {
 import { expandTilde } from "./util/path.ts";
 import { transcribe } from "./voice/stt.ts";
 import { synthesize } from "./voice/tts.ts";
+
+/**
+ * Spawn a fresh Pi in `folder` and return its socket path. When sesh is
+ * enabled it registers the session through `sesh new` (so the session is
+ * named/tagged and visible in sesh) and runs the returned launch command —
+ * waiting for that session's deterministic `<uuid>.sock`. If sesh
+ * registration is unavailable (binary missing, daemon down) it falls back to
+ * a bare `pi` spawn. Note the fallback covers only sesh being *unavailable*:
+ * once a session is registered, a launch failure (e.g. a broken pi extension)
+ * propagates with pi's real error rather than silently retrying.
+ */
+async function spawnPi(cfg: Config, folder: string): Promise<string> {
+  const base = {
+    tmuxSocketName: cfg.tmux.socketName,
+    spawnTmuxSession: cfg.startup.spawnTmuxSession,
+    socketsDir: cfg.pi.socketsDir,
+    folder,
+  };
+  if (cfg.sesh.enabled) {
+    let reg: { uuid: string; launch: string } | null = null;
+    try {
+      reg = await registerPiSession({ bin: cfg.sesh.bin, cwd: folder, tags: ["voice"] });
+    } catch (err: any) {
+      console.log(
+        `[spawn] sesh registration unavailable (${err?.message ?? err}); bare pi spawn`,
+      );
+    }
+    if (reg) {
+      return await spawnPiInFolder({ ...base, command: reg.launch, expectSocketBasename: reg.uuid });
+    }
+  }
+  return await spawnPiInFolder(base);
+}
 
 type ElevenLabsVoice = { voice_id: string; name: string; category?: string };
 
@@ -217,12 +251,7 @@ export function mountApi(app: Hono) {
     }
     const folder = expandTilde(folderRaw);
     try {
-      const newPath = await spawnPiInFolder({
-        tmuxSocketName: cfg.tmux.socketName,
-        spawnTmuxSession: cfg.startup.spawnTmuxSession,
-        socketsDir: cfg.pi.socketsDir,
-        folder,
-      });
+      const newPath = await spawnPi(cfg, folder);
       const fresh = await pollOnce();
       const session = fresh.find((s) => s.socketPath === newPath) ?? null;
       return c.json({ ok: true, socketPath: newPath, session, folder });
@@ -246,12 +275,7 @@ export function mountApi(app: Hono) {
     }
 
     try {
-      const newPath = await spawnPiInFolder({
-        tmuxSocketName: cfg.tmux.socketName,
-        spawnTmuxSession: cfg.startup.spawnTmuxSession,
-        socketsDir: cfg.pi.socketsDir,
-        folder,
-      });
+      const newPath = await spawnPi(cfg, folder);
       // Force a poll so the new session lands in the snapshot.
       const fresh = await pollOnce();
       const session =

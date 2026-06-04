@@ -14,7 +14,7 @@
  * Errors propagate. Caller decides whether to surface to UI or fall back.
  */
 import { execFileSync } from "node:child_process";
-import { readdirSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { basename, join } from "node:path";
 
 export type SpawnOptions = {
@@ -22,7 +22,13 @@ export type SpawnOptions = {
   spawnTmuxSession: string;
   socketsDir: string;
   folder: string;
-  piCommand?: string; // override; default "pi"
+  // Command to run in the new window. Defaults to "pi" (a bare launch). When
+  // spawning through sesh this is the `launch` shell string sesh returns
+  // (`mkdir -p … && cd … && pi --session-id <uuid>`), run via the shell.
+  command?: string;
+  // When known up-front (the sesh path), wait for this exact `<id>.sock`
+  // instead of diffing the whole sockets dir — deterministic, race-free.
+  expectSocketBasename?: string;
   timeoutMs?: number; // default 30000
 };
 
@@ -38,9 +44,12 @@ function makeWindowName(folder: string): string {
 }
 
 export async function spawnPiInFolder(opts: SpawnOptions): Promise<string> {
-  const piCmd = opts.piCommand ?? "pi";
+  const cmd = opts.command ?? "pi";
   const timeoutMs = opts.timeoutMs ?? 30000;
   const sock = opts.tmuxSocketName;
+  const expectPath = opts.expectSocketBasename
+    ? join(opts.socketsDir, `${opts.expectSocketBasename}.sock`)
+    : null;
 
   const before = new Set(listSockets(opts.socketsDir));
 
@@ -68,7 +77,7 @@ export async function spawnPiInFolder(opts: SpawnOptions): Promise<string> {
       "-P",
       "-F",
       "#{window_id}",
-      piCmd,
+      cmd,
     ],
     { encoding: "utf8", timeout: 5000 },
   ).trim();
@@ -81,16 +90,25 @@ export async function spawnPiInFolder(opts: SpawnOptions): Promise<string> {
   // branch below.
   setRemainOnExit(sock, windowId, true);
 
-  // Wait for a new socket to appear, watching for early pi death.
+  // Wait for the socket to appear, watching for early pi death.
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const current = listSockets(opts.socketsDir);
-    for (const path of current) {
-      if (!before.has(path)) {
-        // Success: pi is up. Restore normal exit behavior for this window so
-        // it closes cleanly when the user later quits pi.
+    // Deterministic path (sesh): wait for the specific <uuid>.sock.
+    // Fallback path (bare pi): take the first socket not present before.
+    if (expectPath) {
+      if (existsSync(expectPath)) {
         setRemainOnExit(sock, windowId, false);
-        return path;
+        return expectPath;
+      }
+    } else {
+      const current = listSockets(opts.socketsDir);
+      for (const path of current) {
+        if (!before.has(path)) {
+          // Success: pi is up. Restore normal exit behavior for this window so
+          // it closes cleanly when the user later quits pi.
+          setRemainOnExit(sock, windowId, false);
+          return path;
+        }
       }
     }
     // pi exited before producing a socket — surface its actual output.
