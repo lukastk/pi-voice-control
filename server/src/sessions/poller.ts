@@ -11,6 +11,7 @@
 import { readdirSync, statSync, unlinkSync } from "node:fs";
 import { basename, join } from "node:path";
 import { getRpcState } from "./socket-client.ts";
+import { listPiSessions } from "./sesh.ts";
 import type { PiSession } from "./types.ts";
 import { publish } from "../events/bus.ts";
 import { getConfig } from "../config/store.ts";
@@ -113,6 +114,20 @@ async function tick(): Promise<PiSession[]> {
     }
   }
 
+  // Best-effort enrichment: join sesh metadata (name/tags/status) onto each
+  // discovered socket by sessionId === sesh uuid. Sockets started outside
+  // sesh simply won't match and keep their raw display. listPiSessions never
+  // throws — it returns an empty map if sesh is unavailable.
+  if (cfg.sesh.enabled && next.length > 0) {
+    const meta = await listPiSessions(cfg.sesh.bin);
+    if (meta.size > 0) {
+      for (const s of next) {
+        const m = meta.get(s.sessionId);
+        if (m) s.sesh = m;
+      }
+    }
+  }
+
   if (!shallowEqualSessions(snapshot, next)) {
     snapshot = next;
     publish({ type: "sessions:update", data: snapshot });
@@ -150,7 +165,11 @@ function shallowEqualSessions(a: PiSession[], b: PiSession[]): boolean {
       x.state.hasAppendedSystemPrompt !== y.state.hasAppendedSystemPrompt ||
       x.tmux.session !== y.tmux.session ||
       x.tmux.window !== y.tmux.window ||
-      x.tmux.paneId !== y.tmux.paneId
+      x.tmux.paneId !== y.tmux.paneId ||
+      x.sesh?.name !== y.sesh?.name ||
+      x.sesh?.turnStatus !== y.sesh?.turnStatus ||
+      x.sesh?.summary !== y.sesh?.summary ||
+      (x.sesh?.tags?.join(",") ?? "") !== (y.sesh?.tags?.join(",") ?? "")
     ) {
       return false;
     }

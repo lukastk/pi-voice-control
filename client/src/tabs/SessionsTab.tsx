@@ -11,6 +11,12 @@ type Props = {
   resolveStatus: string | null;
 };
 
+function cwdBasename(cwd: string | null): string {
+  if (!cwd) return "";
+  const parts = cwd.replace(/\/+$/, "").split("/");
+  return parts[parts.length - 1] ?? "";
+}
+
 function realpathLikeEqual(a: string | null | undefined, b: string | null | undefined): boolean {
   if (!a || !b) return false;
   // Approximate; the *server* does the realpath comparison authoritatively.
@@ -109,12 +115,35 @@ export function SessionsTab({ sessions, config, voice, onRefresh, resolveStatus 
             return (
               <li key={s.sessionId} style={rowStyle(isCurrent, isMatch)}>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontFamily: "'SF Mono', monospace", fontSize: 13, color: "#e6e6f0" }}>
+                  {s.sesh && (
+                    <div style={{ fontSize: 13, color: "#e6e6f0", fontWeight: 600 }}>
+                      {s.sesh.name?.trim() || cwdBasename(s.cwd) || "(unnamed)"}
+                      {isMatch && <span style={badgeStyle("#2a4a8a", "#a8c8ff")}>default</span>}
+                      {s.sesh.tags.map((t) => (
+                        <span key={t} style={badgeStyle("#23332a", "#9ac99a")}>
+                          {t}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <div
+                    style={{
+                      fontFamily: "'SF Mono', monospace",
+                      fontSize: s.sesh ? 11 : 13,
+                      color: s.sesh ? "#8a8aa0" : "#e6e6f0",
+                      marginTop: s.sesh ? 3 : 0,
+                    }}
+                  >
                     {s.cwd ?? <span style={{ color: "#666" }}>(no cwd — older Pi)</span>}
-                    {isMatch && (
+                    {!s.sesh && isMatch && (
                       <span style={badgeStyle("#2a4a8a", "#a8c8ff")}>default</span>
                     )}
                   </div>
+                  {s.sesh?.summary && (
+                    <div style={{ fontSize: 11, color: "#777790", marginTop: 3, fontStyle: "italic" }}>
+                      {s.sesh.summary}
+                    </div>
+                  )}
                   <div style={{ fontSize: 11, color: "#9090a8", marginTop: 4 }}>
                     {s.tmux.inTmux ? (
                       <>

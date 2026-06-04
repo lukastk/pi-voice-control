@@ -7,6 +7,22 @@ export type ContextUsage = {
   percent: number;
 };
 
+/**
+ * Metadata from the user's `sesh` session manager, joined onto a discovered
+ * socket by `PiSession.sessionId === sesh record.uuid` (the rpc socket is
+ * named `<uuid>.sock`). Present only for sesh-registered sessions; bare pi
+ * sessions started outside sesh have no entry.
+ */
+export type SeshMeta = {
+  uuid: string;
+  name: string;
+  tags: string[];
+  turnStatus: string; // "idle" | "busy" | "unknown"
+  summary: string;
+  machine: string;
+  contextPct: number;
+};
+
 export type PiSession = {
   socketPath: string;
   sessionId: string;
@@ -26,4 +42,5 @@ export type PiSession = {
     paneIndex?: number;
     paneId?: string;
   };
+  sesh?: SeshMeta;
 };

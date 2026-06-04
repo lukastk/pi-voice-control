@@ -4,6 +4,18 @@ export type ContextUsage = {
   percent: number;
 };
 
+// Metadata from the user's `sesh` session manager, present only for
+// sesh-registered sessions (joined by sessionId === sesh uuid).
+export type SeshMeta = {
+  uuid: string;
+  name: string;
+  tags: string[];
+  turnStatus: string;
+  summary: string;
+  machine: string;
+  contextPct: number;
+};
+
 export type PiSession = {
   socketPath: string;
   sessionId: string;
@@ -23,4 +35,5 @@ export type PiSession = {
     paneIndex?: number;
     paneId?: string;
   };
+  sesh?: SeshMeta;
 };

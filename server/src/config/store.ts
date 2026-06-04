@@ -17,6 +17,15 @@ export type Config = {
     pollIntervalMs: number;
     staleSocketAfterMs: number;
   };
+  sesh: {
+    // When enabled, discovered sockets are enriched with sesh names/tags/
+    // status and new sessions are spawned through `sesh new`. Degrades to raw
+    // socket discovery + bare `pi` spawn if sesh is unavailable.
+    enabled: boolean;
+    // Path to the `sesh` binary. Prefer an ABSOLUTE path — under supervisord
+    // the server's PATH usually omits ~/go/bin where sesh lives.
+    bin: string;
+  };
   startup: {
     defaultFolder: string | null;
     spawnIfMissing: boolean;
@@ -128,6 +137,10 @@ export const DEFAULTS: Config = {
     socketsDir: "/tmp/pi-rpc-sockets",
     pollIntervalMs: 2000,
     staleSocketAfterMs: 30000,
+  },
+  sesh: {
+    enabled: true,
+    bin: "sesh",
   },
   startup: {
     defaultFolder: null,
