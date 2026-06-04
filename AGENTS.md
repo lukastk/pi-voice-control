@@ -54,6 +54,13 @@ cd client && bun run build
 # Build wterm bundle (needed before first run)
 cd wterm && bun run build
 
+# Build / compile-check the Android wrapper (no `java` on PATH — use the JDK
+# bundled with Android Studio and the user's Android SDK).
+export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+export ANDROID_HOME="$HOME/Library/Android/sdk"
+cd android && ./gradlew :app:compileDebugKotlin :app:processDebugResources  # fast compile + layout check
+cd android && ./gradlew assembleDebug                                       # full APK
+
 # Tailscale HTTPS (required for mobile mic)
 bin/tailscale-serve.sh         # Serve 7890, 7880, 7891 over Tailscale HTTPS
 bin/tailscale-serve.sh --off   # Tear down

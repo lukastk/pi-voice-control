@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
@@ -14,12 +15,17 @@ import android.provider.Settings
 import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
+import android.util.Log
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.RadioButton
@@ -52,6 +58,18 @@ class MainActivity : AppCompatActivity() {
     private lateinit var prefs: SharedPreferences
     private lateinit var voiceBridge: VoiceBridge
 
+    private lateinit var connectionError: View
+    private lateinit var connectionErrorMessage: TextView
+
+    // The picker dialog, tracked so a main-frame load failure doesn't stack
+    // a second copy on top of one the user is already editing.
+    private var pickerDialog: AlertDialog? = null
+
+    // True once the in-flight page load has reported a main-frame error, so
+    // onPageFinished (which still fires for the failed load) doesn't hide the
+    // error overlay we just showed.
+    private var currentLoadFailed = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -81,6 +99,15 @@ class MainActivity : AppCompatActivity() {
             true
         }
 
+        connectionError = findViewById(R.id.connection_error)
+        connectionErrorMessage = findViewById(R.id.connection_error_message)
+        findViewById<Button>(R.id.connection_error_switch).setOnClickListener {
+            promptForUrl()
+        }
+        findViewById<Button>(R.id.connection_error_retry).setOnClickListener {
+            load(activeUrl())
+        }
+
         ensurePermissionsAndStart()
     }
 
@@ -92,7 +119,65 @@ class MainActivity : AppCompatActivity() {
             allowFileAccess = false
             allowContentAccess = false
         }
-        webView.webViewClient = WebViewClient() // keep navigation in-app
+        // Keep navigation in-app, and surface main-frame load failures (the
+        // selected target's server being off / host unreachable) instead of
+        // silently sitting on a blank page with no way to switch targets.
+        webView.webViewClient = object : WebViewClient() {
+            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                Log.i(TAG, "onPageStarted url=$url")
+                // Deliberately do NOT reset currentLoadFailed here. WebView
+                // fires onReceivedHttpError *before* committing the error-page
+                // body, and that commit re-fires onPageStarted/onPageFinished
+                // for the same URL — resetting here would wipe the failure flag
+                // we just set and hide the overlay. The flag is reset in load()
+                // when we intentionally start a fresh navigation instead.
+            }
+
+            // Transport-level failures: DNS, connection refused, timeout — the
+            // host can't be reached at all.
+            override fun onReceivedError(
+                view: WebView,
+                request: WebResourceRequest,
+                error: WebResourceError,
+            ) {
+                Log.i(
+                    TAG,
+                    "onReceivedError mainFrame=${request.isForMainFrame} " +
+                        "url=${request.url} code=${error.errorCode} desc=${error.description}",
+                )
+                if (!request.isForMainFrame) return
+                handleMainFrameLoadFailure(
+                    request.url?.toString().orEmpty(),
+                    error.description?.toString().orEmpty(),
+                )
+            }
+
+            // HTTP-level failures: the host answered, but with a 4xx/5xx — e.g.
+            // `tailscale serve` returns 502 when the backend server is off.
+            // WebView surfaces this as ERR_HTTP_RESPONSE_CODE_FAILURE and routes
+            // it here, NOT to onReceivedError.
+            override fun onReceivedHttpError(
+                view: WebView,
+                request: WebResourceRequest,
+                errorResponse: WebResourceResponse,
+            ) {
+                Log.i(
+                    TAG,
+                    "onReceivedHttpError mainFrame=${request.isForMainFrame} " +
+                        "url=${request.url} status=${errorResponse.statusCode}",
+                )
+                if (!request.isForMainFrame) return
+                handleMainFrameLoadFailure(
+                    request.url?.toString().orEmpty(),
+                    "HTTP ${errorResponse.statusCode} ${errorResponse.reasonPhrase.orEmpty()}".trim(),
+                )
+            }
+
+            override fun onPageFinished(view: WebView?, url: String?) {
+                Log.i(TAG, "onPageFinished url=$url failed=$currentLoadFailed")
+                if (!currentLoadFailed) hideConnectionError()
+            }
+        }
         webView.webChromeClient = object : WebChromeClient() {
             override fun onPermissionRequest(request: PermissionRequest) {
                 runOnUiThread {
@@ -201,7 +286,46 @@ class MainActivity : AppCompatActivity() {
             promptForUrl()
             return
         }
-        webView.loadUrl(active)
+        load(active)
+    }
+
+    /** Single entry point for loading a target URL: clears any error overlay
+     *  and the failed flag first, so onPageFinished can hide the overlay on a
+     *  clean load and onReceivedError can re-show it if this one also fails. */
+    private fun load(url: String) {
+        if (url.isEmpty()) {
+            promptForUrl()
+            return
+        }
+        currentLoadFailed = false
+        hideConnectionError()
+        webView.loadUrl(url)
+    }
+
+    /**
+     * Handle a main-frame load failure (transport error or HTTP error status):
+     * mark the load failed, show the connection-error overlay, and pop the
+     * target picker so the user can switch — the whole point of the fix: a dead
+     * selected target must never leave the app stuck with no way to reach
+     * another one. The picker is only auto-opened when one isn't already
+     * showing, so repeated failures (e.g. retrying onto another dead target)
+     * don't stack dialogs.
+     */
+    private fun handleMainFrameLoadFailure(failedUrl: String, reason: String) {
+        currentLoadFailed = true
+        val target = failedUrl.ifEmpty { activeUrl() }
+        connectionErrorMessage.text = buildString {
+            append("Couldn't reach\n")
+            append(target.ifEmpty { "the selected target" })
+            if (reason.isNotEmpty()) append("\n\n($reason)")
+            append("\n\nPick a different target below.")
+        }
+        connectionError.visibility = View.VISIBLE
+        if (pickerDialog?.isShowing != true) promptForUrl()
+    }
+
+    private fun hideConnectionError() {
+        connectionError.visibility = View.GONE
     }
 
     /**
@@ -359,12 +483,17 @@ class MainActivity : AppCompatActivity() {
                 val newActive = checkedTag ?: parsed[0].url
                 saveEntries(parsed)
                 prefs.edit().putString(KEY_ACTIVE_URL, newActive).apply()
-                if (newActive != previousActiveUrl) {
-                    webView.loadUrl(newActive)
+                // Reload on any switch, or whenever the error overlay is up —
+                // re-selecting the same (now hopefully recovered) target should
+                // still retry rather than leave the overlay stuck.
+                if (newActive != previousActiveUrl || connectionError.visibility == View.VISIBLE) {
+                    load(newActive)
                 }
                 dialog.dismiss()
             }
         }
+        dialog.setOnDismissListener { pickerDialog = null }
+        pickerDialog = dialog
         dialog.show()
     }
 
@@ -446,6 +575,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
+        private const val TAG = "VoiceBridgeMain"
         private const val PREFS = "voice_agent_bridge"
         // Legacy single-URL pref written by older builds. Read once at
         // startup for migration into KEY_URL_ENTRIES; never written.

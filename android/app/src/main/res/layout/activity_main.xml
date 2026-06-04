@@ -21,4 +21,43 @@
         android:background="@android:color/transparent"
         android:contentDescription="Long-press to change URL" />
 
+    <!-- Connection-error overlay. Shown when the active target's page fails
+         to load (server off / host unreachable) so the user is never stuck
+         on a blank WebView. Covers the WebView and offers a way to switch
+         targets or retry. Hidden by default; toggled from MainActivity. -->
+    <LinearLayout
+        android:id="@+id/connection_error"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:padding="32dp"
+        android:background="#1a1a2e"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/connection_error_message"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:textColor="#e0e0e0"
+            android:textSize="16sp"
+            android:text="Couldn't reach the selected target." />
+
+        <Button
+            android:id="@+id/connection_error_switch"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="Switch target" />
+
+        <Button
+            android:id="@+id/connection_error_retry"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Retry" />
+
+    </LinearLayout>
+
 </FrameLayout>
