@@ -669,16 +669,23 @@ export default defineAgent({
     // proper nouns/jargon. We send the same list either way; provider
     // adapter below picks the right param.
     const vocab = (sttCfg.vocabulary ?? []).filter((s): s is string => typeof s === "string" && s.trim().length > 0);
+    const dgModel = sttCfg.model || "nova-3";
+    // keyterm/keywords are mutually exclusive by model: Nova-3 ONLY
+    // accepts `keyterm` (English-only, no weight) and 400s on `keywords`
+    // ("Keywords are not supported for Nova-3"); Nova-2 and older ONLY
+    // accept `keywords` (term:weight). Pick by model rather than sending
+    // both.
+    const dgIsNova3 = dgModel.toLowerCase().startsWith("nova-3");
     const baseStt =
       sttCfg.provider === "deepgram"
         ? new DeepgramSTT({
-            model: (sttCfg.model || "nova-3") as any,
+            model: dgModel as any,
             language: sttCfg.language || "en",
-            // keyterm: Nova-3 (English-only). keywords: older models
-            // (all languages, default weight 1). Send both — Deepgram
-            // ignores whichever doesn't apply for the chosen model.
-            keyterm: vocab,
-            keywords: vocab.map((t) => [t, 1] as [string, number]),
+            ...(vocab.length > 0
+              ? dgIsNova3
+                ? { keyterm: vocab }
+                : { keywords: vocab.map((t) => [t, 1] as [string, number]) }
+              : {}),
           })
         : new OpenAISTT({
             model: (sttCfg.model || "whisper-1") as any,

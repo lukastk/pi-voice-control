@@ -28,19 +28,26 @@ async function transcribeDeepgram(opts: {
   if (!apiKey) {
     throw new Error("DEEPGRAM_API_KEY env var not set");
   }
+  const model = opts.config.model || "nova-3";
   const params = new URLSearchParams({
-    model: opts.config.model || "nova-3",
+    model,
     language: opts.config.language || "en",
     smart_format: "true",
   });
-  // Custom vocabulary. Send both forms so the request works regardless
-  // of model: keyterm is Nova-3's parameter (English only, no weight),
-  // keywords is the older parameter (term:weight, all languages).
-  // Deepgram ignores whichever doesn't apply for the chosen model.
+  // Custom vocabulary. The keyterm/keywords parameters are mutually
+  // exclusive by model — Nova-3 ONLY accepts `keyterm` (English-only, no
+  // weight) and returns a 400 ("Keywords are not supported for Nova-3")
+  // if `keywords` is sent; Nova-2 and older ONLY accept `keywords`
+  // (term:weight, all languages). So pick by model rather than sending
+  // both.
+  const isNova3 = model.toLowerCase().startsWith("nova-3");
   for (const term of opts.config.vocabulary ?? []) {
     if (!term) continue;
-    params.append("keyterm", term);
-    params.append("keywords", `${term}:1`);
+    if (isNova3) {
+      params.append("keyterm", term);
+    } else {
+      params.append("keywords", `${term}:1`);
+    }
   }
   const res = await fetch(`https://api.deepgram.com/v1/listen?${params}`, {
     method: "POST",
