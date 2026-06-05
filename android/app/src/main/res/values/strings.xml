@@ -1,6 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Voice Bridge</string>
-    <string name="accessibility_label">Voice Bridge volume control</string>
-    <string name="accessibility_description">Lets a Volume-Up press start/stop a voice turn while the screen is off (only while voice is connected). No screen content is read.</string>
 </resources>

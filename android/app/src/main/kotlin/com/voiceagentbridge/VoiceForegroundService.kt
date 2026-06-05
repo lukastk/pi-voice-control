@@ -268,13 +268,5 @@ class VoiceForegroundService : Service() {
          */
         @Volatile
         var onMediaButton: ((String) -> Unit)? = null
-
-        /**
-         * Whether a voice session is currently connected. Set by VoiceBridge so
-         * VoiceAccessibilityService only hijacks Volume-Up while voice is live
-         * (otherwise volume keys behave normally).
-         */
-        @Volatile
-        var voiceConnected: Boolean = false
     }
 }
