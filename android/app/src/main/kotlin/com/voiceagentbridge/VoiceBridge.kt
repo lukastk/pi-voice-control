@@ -118,6 +118,7 @@ class VoiceBridge(
                     )
                     micMuted = true
                 }
+                VoiceForegroundService.voiceConnected = true
                 emit("connected", JSONObject().put("roomName", roomName))
             } catch (t: Throwable) {
                 Log.w(TAG, "connect failed: ${t.message}", t)
@@ -283,6 +284,7 @@ class VoiceBridge(
                         // event fires, so this branch only runs for
                         // unsolicited disconnects. Drop our refs so
                         // getStateJson reflects reality.
+                        VoiceForegroundService.voiceConnected = false
                         room = null
                         micMuted = true
                         emit(
@@ -436,6 +438,7 @@ class VoiceBridge(
     }
 
     private fun disposeRoom() {
+        VoiceForegroundService.voiceConnected = false
         eventsJob?.cancel()
         eventsJob = null
         room?.let { r ->
