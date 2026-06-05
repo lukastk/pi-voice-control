@@ -1052,6 +1052,35 @@ export default defineAgent({
       }
     });
 
+    // Manual / push-to-talk turn commit. In manual mode turnDetection is
+    // "manual" (the framework never auto-commits), so the turn is committed
+    // when the user MUTES the mic — i.e. taps "stop" via the on-screen button,
+    // the notification media control, or (later) a volume key, all of which go
+    // through setMicrophoneEnabled(false). Unmuting ("start talking") begins a
+    // fresh turn. This is the wiring the original "manual mode, when wired up"
+    // note referred to; without it PTT speech was never sent to Pi. Ignore the
+    // agent's own audio track (only react to the remote user's mic).
+    ctx.room.on(RoomEvent.TrackMuted, (_pub, participant) => {
+      if (activeTurnMode !== "manual") return;
+      if (participant.identity === ctx.room.localParticipant?.identity) return;
+      diagLog("manual mic muted → commit turn");
+      try {
+        session.commitUserTurn();
+      } catch (err) {
+        logger.warn({ err }, "[worker] manual commit failed");
+      }
+    });
+    ctx.room.on(RoomEvent.TrackUnmuted, (_pub, participant) => {
+      if (activeTurnMode !== "manual") return;
+      if (participant.identity === ctx.room.localParticipant?.identity) return;
+      diagLog("manual mic unmuted → fresh turn");
+      try {
+        session.clearUserTurn();
+      } catch (err) {
+        logger.warn({ err }, "[worker] manual clear failed");
+      }
+    });
+
     session.on(voice.AgentSessionEventTypes.UserInputTranscribed, (ev) => {
       logger.info({ transcript: ev.transcript }, "[worker] user");
       const final =
