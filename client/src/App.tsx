@@ -73,17 +73,15 @@ export function App() {
     // also disconnect/reconnect the live session.
     const cycle: Array<"vad" | "manual" | "keyword"> = ["vad", "manual", "keyword"];
     const next = cycle[(cycle.indexOf(turnMode) + 1) % cycle.length]!;
-    const crossesKeywordBoundary = turnMode === "keyword" || next === "keyword";
     try {
       await api.putConfig({ voice: { turnMode: next } });
+      // Every mode changes worker behavior that's fixed at session start —
+      // turnDetection (vad=auto vs manual/keyword=explicit) plus the manual
+      // commit-on-mute and keyword detection paths — so reconnect with the new
+      // mode rather than switching in place. connect() also sets the correct
+      // initial mic mute (manual → muted/PTT, vad/keyword → hot).
       if (voice.state.kind === "connected") {
-        if (crossesKeywordBoundary) {
-          await reconnectVoice();
-        } else {
-          // The master micEnabled toggle dominates: if the user has
-          // muted the mic globally, stay muted regardless of mode.
-          await voice.setMicMutedExplicit(next === "manual" || !micEnabled);
-        }
+        await reconnectVoice({ turnMode: next });
       }
     } catch (err: any) {
       console.error("[turn-mode] toggle failed:", err);
@@ -110,15 +108,21 @@ export function App() {
    * Disconnect + reconnect the current voice target so freshly-saved STT/TTS
    * settings take effect. Wired from SettingsTab's "Save & reconnect" button.
    */
-  async function reconnectVoice() {
+  async function reconnectVoice(overrides?: {
+    turnMode?: "vad" | "manual" | "keyword";
+  }) {
     const v = voice.state;
     if (v.kind !== "connected") return;
     const socketPath = v.socketPath;
     await voice.disconnect();
     // Brief pause so the server's deleteDispatch lands before the new one.
     await new Promise((r) => setTimeout(r, 400));
+    // turnMode may have just been changed via putConfig; server.config (React
+    // state) only catches up asynchronously over SSE, so a caller that just
+    // changed the mode must pass it explicitly or the reconnect uses the stale
+    // one (UI badge and worker end up in different modes).
     await voice.connect(socketPath, {
-      turnMode: server.config?.voice.turnMode ?? "vad",
+      turnMode: overrides?.turnMode ?? server.config?.voice.turnMode ?? "vad",
       micEnabled: server.config?.voice.micEnabled ?? true,
       micDeviceId: server.config?.voice.micDeviceId ?? null,
       androidMicDeviceId: server.config?.voice.androidMicDeviceId ?? null,
