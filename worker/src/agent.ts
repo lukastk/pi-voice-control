@@ -1100,6 +1100,11 @@ export default defineAgent({
         }
         const transcriptScan = keywordScanText(final ? "" : transcript);
         const threshold = activeKeywords.matchThreshold;
+        // Armed state BEFORE detection runs, so the between-turn clear below
+        // can tell "already disarmed" (safe to discard) apart from "this
+        // transcript just armed or ended us" (must not clear — arm already
+        // cleared, and end has a commit in flight).
+        const wasArmedAtStart = keywordArmed;
 
         // Abort: usable in any state, with time-based dedup so STT
         // partials still containing the abort phrase don't fire it
@@ -1152,6 +1157,21 @@ export default defineAgent({
           if (end) {
             diagLog("keyword end", { matched: end.matched, score: end.score });
             performAction("end", "keyword");
+          }
+        }
+        // Discard anything that finalizes while DISARMED so between-turn or
+        // late-finalizing speech can't seep into the next committed message.
+        // (turnDetection is "manual" in keyword mode, so the framework's
+        // audioTranscript only auto-clears on a committed turn.) Detection uses
+        // our own recent-finals window, so clearing the framework buffer here
+        // doesn't affect it. Gate on wasArmedAtStart so we don't clear the
+        // event that just armed (arm already cleared) or ended (commit in
+        // flight) — only events received while ALREADY disarmed.
+        if (!wasArmedAtStart && !keywordArmed && final) {
+          try {
+            session.clearUserTurn();
+          } catch {
+            /* best effort */
           }
         }
         return; // skip the VAD-mode over earcon below
