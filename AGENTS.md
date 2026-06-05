@@ -27,11 +27,14 @@ A voice conversation bridge for Pi coding agent sessions — speak to your Pi se
 
 You start `pi` sessions yourself in tmux. The server discovers them via the `rpc-socket` extension; you pick one in the UI; the worker connects, transcribes your voice, sends it to that Pi session, and speaks the reply back.
 
+The socket directory stays the source of truth for liveness, but when the user's [`sesh`](https://github.com/lukastk/sesh) session manager is available it's layered on top (config `sesh.{enabled,bin}`): discovered sockets are enriched with the sesh name/tags/status (joined by `sessionId === sesh uuid`), and "spawn" goes through `sesh new --agent pi` so voice-created sessions are registered/named/visible in sesh. Both degrade cleanly if sesh is missing. See `_dev/experiments/` for the derisking findings.
+
 ## Requirements
 
 - **Bun** ≥ 1.3 and **Node** ≥ 20
 - **`tmux`**, **`livekit-server`** (binary on PATH), **`pi`** (the AI coding agent)
 - The **`rpc-socket`** Pi extension installed under `~/.pi/agent/extensions/`
+- *(optional)* **`sesh`** on PATH for session enrichment + `sesh new` spawn (degrades gracefully without it)
 - For voice: API keys (see Env vars). Minimum useful set is `OPENAI_API_KEY` (STT) + `ELEVENLABS_API_KEY` (TTS), or `DEEPGRAM_API_KEY` instead of OpenAI for streaming STT.
 
 ## Common Commands
@@ -82,7 +85,7 @@ bin/tailscale-serve.sh --off   # Tear down
 ### Server (`server/`)
 
 Bun HTTP server using Hono. Entry: `server/src/main.ts`. Key modules:
-- `server/src/sessions/` — Pi session discovery via rpc-socket polling
+- `server/src/sessions/` — Pi session discovery via rpc-socket polling; `sesh.ts` enriches sockets with sesh metadata and spawns via `sesh new` (best-effort; `sesh.bin` should be an ABSOLUTE path — under supervisord `~/go/bin` often isn't on PATH)
 - `server/src/livekit.ts` — LiveKit token generation and worker dispatch
 - `server/src/prompt/` — Voice prompt injection (`default.ts`/`file.ts`/`inject.ts`; reads `~/.pi/agent/AGENTS.voice.md`)
 - `server/src/tmux/` — Tmux pane switching (e.g. `focus.ts`)
@@ -120,8 +123,10 @@ Voice can be driven three different ways. Switch modes in the Settings tab or vi
 | Mode | What it does | Best for |
 |------|-------------|---------|
 | **VAD** (default) | Auto-commits a turn after ~550 ms of silence | Quick back-and-forth, hands-free |
-| **Manual (PTT)** | Tap a button to start/stop recording | Noisy environments |
+| **Manual (PTT)** | Tap a button (or the notification play/pause) to start/stop; commit happens on mic-mute, with start/stop earcons | Noisy environments |
 | **Keyword** | Speak a wake phrase to start ("Pi, come in") and another to send ("Pi, that's all") | Long messages, walking around, dictation |
+
+Switching modes always reconnects the session (worker `turnDetection` is fixed at session start). **Barge-in** (`voice.interruptOnTurnStart`, default on): starting a turn (keyword arm / PTT unmute) stops the agent's in-progress TTS + aborts its Pi turn so it doesn't talk over you; VAD already interrupts on speech.
 
 ### Keyword mode phrases (configurable)
 
@@ -151,7 +156,7 @@ Keyword mode uses fuzzy matching with Levenshtein similarity. Configurable: VAD 
 | `SKIP_CLIENT_BUILD` | Set to `1` to skip client rebuild on start (for fast restarts) |
 | `REINSTALL` | Set to force `bun install` on start |
 
-User config (turn mode, voice provider/model, keyword phrases, VAD knobs, etc.) is persisted in `~/.config/voice-agent-bridge/config.json`.
+User config (turn mode, voice provider/model, keyword phrases, VAD knobs, barge-in `voice.interruptOnTurnStart`, `sesh.{enabled,bin}`, etc.) is persisted in `~/.config/voice-agent-bridge/config.json`. Missing keys are filled from defaults on load.
 
 ## Logs
 
@@ -174,7 +179,7 @@ Then open `https://<your-tailnet-name>/` on your phone. Re-run after every `tail
 ## Mobile Clients
 
 - **Browser PWA** — open the Tailscale URL on Android Chrome or iOS Safari, "Add to Home Screen". Chrome PWAs can't keep audio running with the screen off.
-- **Android wrapper** — at `android/`. WebView around the same React UI, plus a native LiveKit Room and a `microphone | mediaPlayback` foreground service that survives screen-off and battery optimization. Supports multiple server URLs via a picker (long-press the top-right corner).
+- **Android wrapper** — at `android/`. WebView around the same React UI, plus a native LiveKit Room and a `microphone | mediaPlayback` foreground service that survives screen-off and battery optimization. Supports multiple server URLs via a picker (long-press the top-right corner). The foreground service owns a `MediaSession` + MediaStyle notification, so the **lock-screen/notification play-pause** starts/stops a turn (icon reflects state). Selecting a **Bluetooth mic** routes via `AudioManager.setCommunicationDevice` (from `availableCommunicationDevices`) — `setPreferredInputDevice` alone never activates the SCO link; needs `BLUETOOTH_CONNECT`. Note: while the BT mic (SCO/call mode) is active, **hardware buttons can't control the turn** — earbud taps become call-controls and volume keys aren't dispatched to apps screen-off (verified dead ends; see git history / `_dev/experiments/03`).
 
 ## Multi-Host Deployment
 
