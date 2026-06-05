@@ -383,6 +383,29 @@ class StubLLM extends llm.LLM {
  * explicit cleanup via #interruptPendingSays() so they don't play after
  * the user has moved on.
  */
+/**
+ * An immediately-closed (empty) LLM output stream, returned from llmNode
+ * instead of `null`.
+ *
+ * Why: this worker doesn't use a real LLM — llmNode kicks off pi.prompt() in
+ * the background and produces no framework text stream. Returning `null` is the
+ * documented way to signal that, BUT @livekit/agents@1.3.2's
+ * generation.ts:_performLLMInferenceImpl has a bug on the null path: it closes
+ * its textWriter once in the `llmStream === null` branch AND again in its
+ * `finally`, throwing `ERR_INVALID_STATE: WritableStream is closed`. That
+ * rejection aborts the agent turn and (via repeated client re-dispatch) churns
+ * fresh job processes — the root of both the per-turn crash and the memory
+ * growth. Returning a non-null empty stream skips the null branch, so the
+ * writer is closed exactly once. Semantically identical: zero text chunks.
+ */
+function emptyLLMStream(): NodeReadableStream<string | llm.ChatChunk> {
+  return new NodeReadableStream<string | llm.ChatChunk>({
+    start(controller) {
+      controller.close();
+    },
+  });
+}
+
 class VoiceBridgeAgent extends voice.Agent {
   #pi: PiSocket;
   #pendingSays: SpeechHandle[] = [];
@@ -483,7 +506,7 @@ class VoiceBridgeAgent extends voice.Agent {
     chatCtx: llm.ChatContext,
     _toolCtx: llm.ToolContext,
     _modelSettings: voice.ModelSettings,
-  ): Promise<NodeReadableStream<string | llm.ChatChunk> | null> {
+  ): Promise<NodeReadableStream<string | llm.ChatChunk>> {
     const logger = log();
 
     // Single-shot drop flag set by the keyword-mode "scrap" / "redo" /
@@ -493,7 +516,7 @@ class VoiceBridgeAgent extends voice.Agent {
     if (this.#dropNextTurn) {
       this.#dropNextTurn = false;
       diagLog("llmNode drop (keyword command)");
-      return null;
+      return emptyLLMStream();
     }
 
     let userText = "";
@@ -521,7 +544,7 @@ class VoiceBridgeAgent extends voice.Agent {
       }
     }
 
-    if (!userText) return null;
+    if (!userText) return emptyLLMStream();
 
     const pi = this.#pi;
     const session = this.session;
@@ -621,7 +644,7 @@ class VoiceBridgeAgent extends voice.Agent {
       }
     });
 
-    return null;
+    return emptyLLMStream();
   }
 }
 
@@ -917,6 +940,18 @@ export default defineAgent({
       switch (action) {
         case "start": {
           if (keywordArmed) return;
+          // Discard anything STT accumulated while DISARMED before opening the
+          // armed window. In keyword mode turnDetection is "manual", so the
+          // framework's audioTranscript is never auto-cleared between turns;
+          // without this, pre-arm speech (e.g. an earlier "One, two, three.")
+          // lingers in the buffer and gets committed when the end phrase fires.
+          // Clearing on arm makes the armed window authoritative: only speech
+          // transcribed AFTER arming can reach Pi.
+          try {
+            session.clearUserTurn();
+          } catch (err) {
+            logger.warn({ err }, "[worker] clearUserTurn on arm failed");
+          }
           setArmed(true);
           if (shouldPlay("copy")) playEarcon(session, "copy");
           break;
@@ -1113,6 +1148,38 @@ export default defineAgent({
     // gets an unambiguous "voice connected" cue without TTS chatter.
     if (activeEarcons.enabled) playEarcon(session, "connect");
 
+    // Authoritative teardown. Runs when the job shuts down — user disconnect,
+    // a mode-toggle re-dispatch, or an error path. Previously only pi.close()
+    // ran (on room "disconnected"), so the AgentSession / STT / VAD streams
+    // weren't closed and the process leaned on the framework's 15s orphan
+    // timeout to exit. Under reconnect/mode-toggle churn that stacked fresh
+    // forked job processes (each pinning a Silero ONNX runtime + Pi socket +
+    // room) faster than they drained — the dominant source of the memory
+    // growth. Close everything deterministically so the process exits promptly.
+    ctx.addShutdownCallback(async () => {
+      diagLog("=== session shutdown ===", { jobId: ctx.job.id });
+      clearArmedTimeout();
+      try {
+        await session.close();
+      } catch (err) {
+        logger.warn({ err }, "[worker] session.close failed");
+      }
+      try {
+        await stt.close();
+      } catch (err) {
+        logger.warn({ err }, "[worker] stt.close failed");
+      }
+      try {
+        await tts.close();
+      } catch (err) {
+        logger.warn({ err }, "[worker] tts.close failed");
+      }
+      pi.close();
+    });
+
+    // Early signal: close the Pi socket as soon as the room drops, without
+    // waiting for the shutdown callback (which the addShutdownCallback above
+    // also covers idempotently).
     ctx.room.on("disconnected", () => {
       logger.info("[worker] room disconnected — closing Pi socket");
       pi.close();
