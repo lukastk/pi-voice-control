@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug-only overlay (merged into the debug APK only). Adds the Bluetooth
+  permission and the throwaway Mic Lab activity used to R&D Bluetooth mic
+  routing (experiment _dev/experiments/03_android_bt_mic_routing). None of
+  this ships in release builds. Launch with:
+    adb shell am start -n com.voiceagentbridge.debug/com.voiceagentbridge.MicLabActivity
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+    <application>
+        <activity
+            android:name=".MicLabActivity"
+            android:exported="true"
+            android:label="Mic Lab" />
+    </application>
+
+</manifest>

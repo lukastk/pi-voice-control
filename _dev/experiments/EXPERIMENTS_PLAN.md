@@ -1,12 +1,14 @@
 # Experiments plan
 
-Throwaway prototyping for **sesh ↔ pi-voice-control integration** (Phase 1 + 2: enrich the session picker with sesh metadata, and spawn voice sessions through sesh). Each experiment is a numbered subdirectory under `_dev/experiments/`. The only deliverable is **learnings** — write them in the experiment's `FINDINGS.md` and summarize under the experiment's "Findings" section here. Experiment code is throwaway; rewrite in `server/` once confident.
+Throwaway prototyping for pi-voice-control. Each experiment is a numbered subdirectory under `_dev/experiments/`. The only deliverable is **learnings** — write them in the experiment's `FINDINGS.md` and summarize under the experiment's "Findings" section here. Experiment code is throwaway; rewrite in the real source once confident.
 
 Status legend: `todo` · `in progress` · `done` · `skipped`.
 
-Run environment: macbook (has a live `sesh-daemon`, `tmux -L mysystem`, and pi sockets in `/tmp/pi-rpc-sockets/`).
-
 ---
+
+## Group A — sesh ↔ pi-voice-control integration
+
+Enrich the session picker with sesh metadata, and spawn voice sessions through sesh. Run env: macbook (live `sesh-daemon`, `tmux -L mysystem`, pi sockets in `/tmp/pi-rpc-sockets/`).
 
 ### `00_sesh_query_and_join`
 
@@ -67,6 +69,32 @@ Run environment: macbook (has a live `sesh-daemon`, `tmux -L mysystem`, and pi s
 - **`sesh` is NOT on the server's PATH under supervisord on mymain** (`~/go/bin` absent) → `sesh.bin` must be **absolute** (`/home/lukastk/go/bin/sesh`). A `bin:"sesh"` default would silently no-op on the real deployment.
 - Failures are catchable: binary missing → ENOENT; daemon down → exit 1 + stderr. Phase 1 → empty enrichment; Phase 2 → fall back to bare-`pi` spawn.
 - No `--machine` filter needed for correctness. mymain daemon healthy.
+
+---
+
+## Group B — Android Bluetooth mic routing
+
+Selecting a Bluetooth (AirPods) mic in the Android app doesn't work — capture stays on the built-in mic. Suspected causes: no `BLUETOOTH_CONNECT` permission, and routing via `setPreferredInputDevice` (a hint) which never starts Bluetooth SCO. Run env: physical Android phone over USB + AirPods, human-in-the-loop (Lukas).
+
+### `03_android_bt_mic_routing`
+
+**Status:** done (2026-06-05)
+
+**Questions**
+- Does `getDevices(GET_DEVICES_INPUTS)` list the AirPods SCO mic with vs without `BLUETOOTH_CONNECT` granted?
+- Which routing recipe makes `AudioRecord.getRoutedDevice()` == AirPods AND registers input level when speaking into them?
+  - A: `AudioRecord.setPreferredDevice(bt)` (today's approach).
+  - B: `AudioManager.setCommunicationDevice(bt)` (API 31+).
+  - C: legacy `startBluetoothSco()` + `MODE_IN_COMMUNICATION`.
+- Does it require `MODE_IN_COMMUNICATION`? Any interaction with the foreground service / LiveKit AudioSwitchHandler?
+
+**Method**
+- A throwaway debug-only `MicLabActivity` (in `app/src/debug/`) that exercises raw Android audio APIs (no LiveKit), shows live routed-device + RMS level + comms/SCO state on screen and in logcat (tag `MicLab`). A/B by speaking into AirPods vs phone. Lab code is throwaway; the winning recipe gets ported into `VoiceBridge.applyPreferredInputDevice`.
+
+**Findings** — full writeup in [`03_android_bt_mic_routing/FINDINGS.md`](03_android_bt_mic_routing/FINDINGS.md)
+- BT mic capture needs: `BLUETOOTH_CONNECT` permission + `MODE_IN_COMMUNICATION` + `setCommunicationDevice(dev)` where `dev` comes from **`availableCommunicationDevices`** (NOT `getDevices` — ids differ). Measured working (rms→2571, routed=Bluetooth SCO).
+- Today's `setPreferredDevice(getDevices BT)` is the bug: reports routed=BT but rms flat 0 (SCO never activated). `getRoutedDevice()` alone is a misleading signal.
+- Production fix: add `BLUETOOTH_CONNECT` (main manifest + runtime). LiveKit's AudioSwitchHandler may then auto-route — test the real flow first; port the explicit recipe only if needed.
 
 ---
 

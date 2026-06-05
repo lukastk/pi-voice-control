@@ -1,8 +1,10 @@
 package com.voiceagentbridge
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
+import android.os.Build
 import android.util.Log
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
@@ -91,6 +93,9 @@ class VoiceBridge(
                 try {
                     r.localParticipant.setMicrophoneEnabled(!manualMode)
                     micMuted = manualMode
+                    // Diagnostic (experiment 03 follow-up): observe what LiveKit's
+                    // audio handler routed to once the mic track is live.
+                    logAudioRouting("post-mic-enable")
                 } catch (t: Throwable) {
                     Log.w(TAG, "setMicrophoneEnabled at connect failed: ${t.message}", t)
                     emit(
@@ -341,6 +346,33 @@ class VoiceBridge(
             Log.i(TAG, "preferred mic set: id=${match.id} type=${audioDeviceTypeName(match.type)} name=${match.productName}")
         } catch (t: Throwable) {
             Log.w(TAG, "setPreferredInputDevice failed: ${t.message}", t)
+        }
+    }
+
+    /** Diagnostic: snapshot the current audio routing so we can see, in the
+     *  real LiveKit flow, whether the SDK's audio handler routed capture to a
+     *  Bluetooth headset (vs the built-in mic). Temporary — paired with the
+     *  Bluetooth mic fix; remove once routing is confirmed. */
+    @SuppressLint("MissingPermission")
+    private fun logAudioRouting(label: String) {
+        try {
+            val am = activity.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val comms = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) am.communicationDevice else null
+            @Suppress("DEPRECATION") val sco = am.isBluetoothScoOn
+            Log.i(
+                TAG,
+                "audio routing [$label]: mode=${am.mode} scoOn=$sco commsDevice=" +
+                    (comms?.let { "id=${it.id} ${audioDeviceTypeName(it.type)}" } ?: "null"),
+            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                Log.i(
+                    TAG,
+                    "availableCommDevices: " +
+                        am.availableCommunicationDevices.joinToString { "id=${it.id}/${audioDeviceTypeName(it.type)}" },
+                )
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "logAudioRouting failed: ${t.message}")
         }
     }
 
