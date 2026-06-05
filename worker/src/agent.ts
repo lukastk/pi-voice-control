@@ -284,8 +284,14 @@ function stripKeywords(text: string): string {
   // through the end of the match. Anything before the start phrase is
   // pre-keyword speech the user happened to make before triggering the
   // agent — clearly not part of the message they intended to send.
+  // Only strip a start phrase that sits at the FRONT of the buffer — that's
+  // where a real leaked wake phrase would be. With clearUserTurn-on-arm the
+  // armed buffer normally contains no start phrase at all, so a match deep in
+  // the buffer is a mishearing of the user's message (e.g. a failed "Kit,
+  // stop" attempt scoring as "Kit, start" at this permissive threshold);
+  // slicing from there would wrongly discard the real message.
   const startMatch = findAnyKeyword(out, activeKeywords.start, stripThreshold);
-  if (startMatch) out = out.slice(startMatch.range[1]);
+  if (startMatch && startMatch.range[0] <= 3) out = out.slice(startMatch.range[1]);
 
   // End phrase: drop from the start of the match through the end of the
   // transcript. The user said "...Pi, that's all" and wants the trailer
@@ -857,6 +863,30 @@ export default defineAgent({
     // repeatedly until the audioTranscript clears.
     let lastAbortFireAt = 0;
 
+    // Rolling window of recent FINAL transcript segments, used for keyword
+    // detection. STT — especially over Bluetooth SCO — frequently splits a
+    // command phrase across two finals (e.g. "Kit," then "stop."), which a
+    // single-transcript match never catches, forcing the user to repeat the
+    // phrase many times. Matching against the last ~2.5s of finals plus the
+    // current event reunites the split. Cleared whenever an action fires
+    // (via performAction) so stale text can't re-trigger across the arm
+    // boundary; entries also age out by time so the message body can't
+    // accumulate unboundedly.
+    const recentFinals: { text: string; t: number }[] = [];
+    const KEYWORD_WINDOW_MS = 2500;
+    const keywordScanText = (extra: string): string => {
+      const now = Date.now();
+      while (recentFinals.length > 0 && now - recentFinals[0]!.t > KEYWORD_WINDOW_MS) {
+        recentFinals.shift();
+      }
+      const parts = recentFinals.map((r) => r.text);
+      if (extra.trim()) parts.push(extra);
+      return parts.join(" ").replace(/\s+/g, " ").trim();
+    };
+    const clearKeywordWindow = () => {
+      recentFinals.length = 0;
+    };
+
     // Publish a voice-state change to the client over the LiveKit data
     // channel. Used today for the keyword-mode "armed" indicator in the
     // top bar; future state can ride the same kind="voice-state" topic.
@@ -937,6 +967,9 @@ export default defineAgent({
      *  is a no-op, etc. */
     const performAction = (action: Action, source: ActionSource): void => {
       diagLog("action", { action, source, armed: keywordArmed });
+      // Any action resets the detection window so a just-matched phrase (or
+      // stale pre-action text) can't re-fire on the next transcript event.
+      clearKeywordWindow();
       switch (action) {
         case "start": {
           if (keywordArmed) return;
@@ -1029,13 +1062,21 @@ export default defineAgent({
 
       if (activeTurnMode === "keyword") {
         const transcript = ev.transcript ?? "";
+        // Push finals into the rolling window first so the scan includes them;
+        // partials aren't stored (they grow/replace within a segment) but are
+        // appended to the scan text live. Result: a phrase split across finals
+        // ("Kit," + "stop.") and a phrase still forming in a partial both match.
+        if (final && transcript.trim()) {
+          recentFinals.push({ text: transcript, t: Date.now() });
+        }
+        const transcriptScan = keywordScanText(final ? "" : transcript);
         const threshold = activeKeywords.matchThreshold;
 
         // Abort: usable in any state, with time-based dedup so STT
         // partials still containing the abort phrase don't fire it
         // repeatedly until the framework clears the transcript.
         if (Date.now() - lastAbortFireAt > 3000) {
-          const a = findAnyKeyword(transcript, activeKeywords.abort, threshold);
+          const a = findAnyKeyword(transcriptScan, activeKeywords.abort, threshold);
           if (a) {
             lastAbortFireAt = Date.now();
             diagLog("keyword abort", { matched: a.matched, score: a.score });
@@ -1051,14 +1092,14 @@ export default defineAgent({
         // only while idle, so they can't shadow each other.
         if (!keywordArmed) {
           // Idle: replay last response, or arm for a new message.
-          const r = findAnyKeyword(transcript, activeKeywords.replay, threshold);
+          const r = findAnyKeyword(transcriptScan, activeKeywords.replay, threshold);
           if (r && Date.now() - lastReplayFireAt > 3000) {
             lastReplayFireAt = Date.now();
             diagLog("keyword replay", { matched: r.matched, score: r.score });
             performAction("replay", "keyword");
             return;
           }
-          const m = findAnyKeyword(transcript, activeKeywords.start, threshold);
+          const m = findAnyKeyword(transcriptScan, activeKeywords.start, threshold);
           if (m) {
             diagLog("keyword start", { matched: m.matched, score: m.score });
             performAction("start", "keyword");
@@ -1066,19 +1107,19 @@ export default defineAgent({
         } else {
           // Armed: scrap (un-arm), redo (re-arm with fresh state), or
           // end (commit normally).
-          const scrap = findAnyKeyword(transcript, activeKeywords.scrap, threshold);
+          const scrap = findAnyKeyword(transcriptScan, activeKeywords.scrap, threshold);
           if (scrap) {
             diagLog("keyword scrap", { matched: scrap.matched, score: scrap.score });
             performAction("scrap", "keyword");
             return;
           }
-          const redo = findAnyKeyword(transcript, activeKeywords.redo, threshold);
+          const redo = findAnyKeyword(transcriptScan, activeKeywords.redo, threshold);
           if (redo) {
             diagLog("keyword redo", { matched: redo.matched, score: redo.score });
             performAction("redo", "keyword");
             return;
           }
-          const end = findAnyKeyword(transcript, activeKeywords.end, threshold);
+          const end = findAnyKeyword(transcriptScan, activeKeywords.end, threshold);
           if (end) {
             diagLog("keyword end", { matched: end.matched, score: end.score });
             performAction("end", "keyword");
