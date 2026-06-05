@@ -29,6 +29,24 @@ class VoiceAccessibilityService : AccessibilityService() {
     private val TAG = "VoiceA11y"
 
     override fun onKeyEvent(event: KeyEvent): Boolean {
+        // Diagnostic: log every volume key + the intercept decision so we can
+        // see whether presses reach us and why one does/doesn't toggle.
+        // (Temporary while verifying; remove once confirmed.)
+        if (
+            (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP ||
+                event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) &&
+            event.action == KeyEvent.ACTION_DOWN &&
+            event.repeatCount == 0
+        ) {
+            val pm = getSystemService(POWER_SERVICE) as? PowerManager
+            val screenOff = pm != null && !pm.isInteractive
+            Log.i(
+                TAG,
+                "key=${KeyEvent.keyCodeToString(event.keyCode)} " +
+                    "connected=${VoiceForegroundService.voiceConnected} screenOff=$screenOff",
+            )
+        }
+
         // Only Volume-Up is ours; let every other key (incl. Volume-Down)
         // dispatch normally.
         if (event.keyCode != KeyEvent.KEYCODE_VOLUME_UP) return false

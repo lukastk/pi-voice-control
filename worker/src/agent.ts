@@ -1071,6 +1071,9 @@ export default defineAgent({
       if (activeTurnMode !== "manual") return;
       if (participant.identity === ctx.room.localParticipant?.identity) return;
       diagLog("manual mic muted → commit turn");
+      // Stop earcon — same "over" cue keyword mode plays on end, so PTT (the
+      // button, the notification control, the volume key) is audibly confirmed.
+      if (shouldPlay("over")) playEarcon(session, "over");
       try {
         session.commitUserTurn();
       } catch (err) {
@@ -1088,6 +1091,9 @@ export default defineAgent({
       } catch (err) {
         logger.warn({ err }, "[worker] manual clear failed");
       }
+      // Start earcon (the "copy" cue, after any barge-in interrupt) so the user
+      // hears that the mic is now live.
+      if (shouldPlay("copy")) playEarcon(session, "copy");
     });
 
     session.on(voice.AgentSessionEventTypes.UserInputTranscribed, (ev) => {
