@@ -57,7 +57,19 @@ class VoiceBridge(
 
     @Volatile private var room: Room? = null
     @Volatile private var micMuted: Boolean = true
+    // The explicitly-chosen input device id (AudioDeviceInfo.id, stringified)
+    // for the current session, or "" for default. Re-applied on PTT unmute,
+    // when the mic AudioRecord (and thus the route) actually comes up.
+    private var preferredMicId: String = ""
     private var eventsJob: Job? = null
+
+    init {
+        // Relay earbud-tap / notification media-button actions into the web UI,
+        // where voice.ts maps them to a mode-aware start/stop toggle.
+        VoiceForegroundService.onMediaButton = { action ->
+            emit("media-button", JSONObject().put("action", action))
+        }
+    }
 
     @JavascriptInterface
     fun connect(
@@ -82,10 +94,7 @@ class VoiceBridge(
                 attachListeners(r)
                 r.connect(url, token, options = ConnectOptions())
                 room = r
-                // Apply preferred input device (if any) before publishing
-                // the mic — the AudioRecord opened by setMicrophoneEnabled
-                // picks up the ADM's current preferred device.
-                applyPreferredInputDevice(r, micDeviceId)
+                preferredMicId = micDeviceId
                 // Publish (and set initial mute) before announcing
                 // "connected" so the JS layer sees a fully-set-up Room.
                 // Failure to publish is non-fatal: the Room is up, the
@@ -93,9 +102,11 @@ class VoiceBridge(
                 try {
                     r.localParticipant.setMicrophoneEnabled(!manualMode)
                     micMuted = manualMode
-                    // Diagnostic (experiment 03 follow-up): observe what LiveKit's
-                    // audio handler routed to once the mic track is live.
-                    logAudioRouting("post-mic-enable")
+                    // Apply the chosen input device AFTER the mic track is live:
+                    // Bluetooth routing needs the session in MODE_IN_COMMUNICATION,
+                    // which LiveKit sets when audio starts. (No-op in manual mode
+                    // until the mic is unmuted — see setMicMuted.)
+                    if (!manualMode) applyPreferredInputDevice(r, micDeviceId)
                 } catch (t: Throwable) {
                     Log.w(TAG, "setMicrophoneEnabled at connect failed: ${t.message}", t)
                     emit(
@@ -138,6 +149,10 @@ class VoiceBridge(
             try {
                 r.localParticipant.setMicrophoneEnabled(!muted)
                 micMuted = muted
+                // Re-assert the chosen input device when the mic comes up —
+                // in manual/PTT mode the route only takes effect once the
+                // AudioRecord is live (i.e. on unmute).
+                if (!muted) applyPreferredInputDevice(r, preferredMicId)
                 emit("mic-state", JSONObject().put("muted", muted))
             } catch (t: Throwable) {
                 Log.w(TAG, "setMicMuted failed: ${t.message}", t)
@@ -224,6 +239,9 @@ class VoiceBridge(
      * leak a Room (and its mic + WebRTC sockets) past Activity destruction.
      */
     fun shutdown() {
+        // Drop the media-button relay so the static callback doesn't retain
+        // this Activity/WebView past destruction.
+        VoiceForegroundService.onMediaButton = null
         room?.let { r ->
             try { r.disconnect() } catch (_: Throwable) { /* best effort */ }
         }
@@ -318,61 +336,65 @@ class VoiceBridge(
     }
 
     /**
-     * Pin the WebRTC ADM to a specific hardware mic. Empty string means
-     * "let the OS pick." Stale ids (e.g. a Bluetooth headset that's no
-     * longer connected) silently fall back to the OS default — the user
-     * can re-pick from Settings if they care.
+     * Route audio capture to the user's explicitly chosen mic. Empty string
+     * means "let LiveKit's audio handler pick" (its default, which auto-routes
+     * to a connected Bluetooth headset).
+     *
+     * Device-type aware (see _dev/experiments/03_android_bt_mic_routing):
+     *  - Bluetooth (SCO): setPreferredInputDevice alone never activates the SCO
+     *    link, so capture silently stays on the built-in mic. Route via the
+     *    communication device instead, picking from availableCommunicationDevices
+     *    (whose ids differ from getDevices). Must run while the audio session is
+     *    in MODE_IN_COMMUNICATION, i.e. after the mic track is live.
+     *  - Wired / USB / built-in: pin the ADM's AudioRecord via
+     *    setPreferredInputDevice.
+     *
+     * Stale ids (e.g. a headset that's since disconnected) fall back to default.
      */
+    @SuppressLint("MissingPermission")
     private fun applyPreferredInputDevice(r: Room, micDeviceId: String) {
         if (micDeviceId.isEmpty()) return
-        val adm = r.lkObjects.audioDeviceModule as? JavaAudioDeviceModule
-        if (adm == null) {
-            Log.w(TAG, "ADM is not JavaAudioDeviceModule; cannot setPreferredInputDevice")
-            return
-        }
         val targetId = micDeviceId.toIntOrNull()
         if (targetId == null) {
             Log.w(TAG, "androidMicDeviceId '$micDeviceId' not an int; ignoring")
             return
         }
         val am = activity.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val match = am.getDevices(AudioManager.GET_DEVICES_INPUTS).firstOrNull { it.id == targetId }
-        if (match == null) {
-            Log.i(TAG, "preferred mic id=$targetId not present; using OS default")
+        val requested = am.getDevices(AudioManager.GET_DEVICES_INPUTS).firstOrNull { it.id == targetId }
+        if (requested == null) {
+            Log.i(TAG, "preferred mic id=$targetId not present; using default")
+            return
+        }
+
+        if (requested.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+        ) {
+            val btComms = am.availableCommunicationDevices.firstOrNull {
+                it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
+            }
+            if (btComms == null) {
+                Log.i(TAG, "no Bluetooth communication device available; using default")
+                return
+            }
+            try {
+                val ok = am.setCommunicationDevice(btComms)
+                Log.i(TAG, "setCommunicationDevice(BT id=${btComms.id}) -> $ok")
+            } catch (t: Throwable) {
+                Log.w(TAG, "setCommunicationDevice failed: ${t.message}", t)
+            }
+            return
+        }
+
+        val adm = r.lkObjects.audioDeviceModule as? JavaAudioDeviceModule
+        if (adm == null) {
+            Log.w(TAG, "ADM is not JavaAudioDeviceModule; cannot setPreferredInputDevice")
             return
         }
         try {
-            adm.setPreferredInputDevice(match)
-            Log.i(TAG, "preferred mic set: id=${match.id} type=${audioDeviceTypeName(match.type)} name=${match.productName}")
+            adm.setPreferredInputDevice(requested)
+            Log.i(TAG, "preferred mic set: id=${requested.id} type=${audioDeviceTypeName(requested.type)}")
         } catch (t: Throwable) {
             Log.w(TAG, "setPreferredInputDevice failed: ${t.message}", t)
-        }
-    }
-
-    /** Diagnostic: snapshot the current audio routing so we can see, in the
-     *  real LiveKit flow, whether the SDK's audio handler routed capture to a
-     *  Bluetooth headset (vs the built-in mic). Temporary — paired with the
-     *  Bluetooth mic fix; remove once routing is confirmed. */
-    @SuppressLint("MissingPermission")
-    private fun logAudioRouting(label: String) {
-        try {
-            val am = activity.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-            val comms = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) am.communicationDevice else null
-            @Suppress("DEPRECATION") val sco = am.isBluetoothScoOn
-            Log.i(
-                TAG,
-                "audio routing [$label]: mode=${am.mode} scoOn=$sco commsDevice=" +
-                    (comms?.let { "id=${it.id} ${audioDeviceTypeName(it.type)}" } ?: "null"),
-            )
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                Log.i(
-                    TAG,
-                    "availableCommDevices: " +
-                        am.availableCommunicationDevices.joinToString { "id=${it.id}/${audioDeviceTypeName(it.type)}" },
-                )
-            }
-        } catch (t: Throwable) {
-            Log.w(TAG, "logAudioRouting failed: ${t.message}")
         }
     }
 

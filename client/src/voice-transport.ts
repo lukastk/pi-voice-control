@@ -22,7 +22,10 @@ export type VoiceEvent =
   | { type: "reconnected" }
   | { type: "data"; topic: string; message: any }
   | { type: "error"; source: string; message: string }
-  | { type: "mic-state"; muted: boolean };
+  | { type: "mic-state"; muted: boolean }
+  // Android only: an earbud tap / notification media control. "toggle" =
+  // start/stop the current turn (mapped mode-aware in voice.ts).
+  | { type: "media-button"; action: string };
 
 export type VoiceEventHandler<E extends VoiceEvent["type"]> = (
   ev: Extract<VoiceEvent, { type: E }>,

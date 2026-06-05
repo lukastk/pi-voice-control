@@ -13,8 +13,12 @@ import android.media.AudioManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.support.v4.media.session.MediaSessionCompat
+import android.support.v4.media.session.PlaybackStateCompat
 import android.util.Log
+import android.view.KeyEvent
 import androidx.core.app.NotificationCompat
+import androidx.media.app.NotificationCompat as MediaNotificationCompat
 
 /**
  * Foreground service of type microphone|mediaPlayback that keeps the WebView
@@ -30,32 +34,16 @@ class VoiceForegroundService : Service() {
 
     private var wakeLock: PowerManager.WakeLock? = null
     private var audioFocusRequest: AudioFocusRequest? = null
+    private var mediaSession: MediaSessionCompat? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         ensureChannel()
+        setupMediaSession()
 
-        val openIntent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
-        val pi = PendingIntent.getActivity(
-            this,
-            0,
-            openIntent,
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
-
-        val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Voice Agent Bridge")
-            .setContentText("Voice link active. Tap to return.")
-            .setSmallIcon(R.drawable.ic_mic)
-            .setContentIntent(pi)
-            .setOngoing(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .build()
+        val notification = buildNotification()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             // Android 14+ requires the type passed at start time too.
@@ -79,6 +67,100 @@ class VoiceForegroundService : Service() {
         ).apply { acquire(/* no timeout */) }
 
         requestAudioFocus()
+    }
+
+    /**
+     * Media session so earbud taps (media buttons) and the notification /
+     * lock-screen play-pause control drive the voice turn. The session is kept
+     * active while the service runs; button events are forwarded to whatever
+     * listener VoiceBridge has registered (which relays them to the web UI).
+     */
+    private fun setupMediaSession() {
+        val ms = MediaSessionCompat(this, "VoiceBridge")
+        ms.setCallback(object : MediaSessionCompat.Callback() {
+            // Transport commands from the system / lock-screen controls.
+            override fun onPlay() = fireMediaButton("toggle")
+            override fun onPause() = fireMediaButton("toggle")
+            override fun onSkipToNext() = fireMediaButton("next")
+            override fun onSkipToPrevious() = fireMediaButton("prev")
+
+            // Raw hardware/Bluetooth media keys (earbud taps). Consume the
+            // ones we map so the default decode doesn't also fire onPlay/onPause.
+            override fun onMediaButtonEvent(mediaButtonEvent: Intent): Boolean {
+                val ke: KeyEvent? =
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        mediaButtonEvent.getParcelableExtra(Intent.EXTRA_KEY_EVENT, KeyEvent::class.java)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        mediaButtonEvent.getParcelableExtra(Intent.EXTRA_KEY_EVENT)
+                    }
+                if (ke != null && ke.action == KeyEvent.ACTION_DOWN && ke.repeatCount == 0) {
+                    when (ke.keyCode) {
+                        KeyEvent.KEYCODE_HEADSETHOOK,
+                        KeyEvent.KEYCODE_MEDIA_PLAY,
+                        KeyEvent.KEYCODE_MEDIA_PAUSE,
+                        KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> { fireMediaButton("toggle"); return true }
+                        KeyEvent.KEYCODE_MEDIA_NEXT -> { fireMediaButton("next"); return true }
+                        KeyEvent.KEYCODE_MEDIA_PREVIOUS -> { fireMediaButton("prev"); return true }
+                    }
+                }
+                return super.onMediaButtonEvent(mediaButtonEvent)
+            }
+        })
+        // A "playing" state makes us the active media target so hardware media
+        // buttons route here, and tells the lock screen to show a pause control.
+        ms.setPlaybackState(
+            PlaybackStateCompat.Builder()
+                .setActions(
+                    PlaybackStateCompat.ACTION_PLAY_PAUSE or
+                        PlaybackStateCompat.ACTION_PLAY or
+                        PlaybackStateCompat.ACTION_PAUSE,
+                )
+                .setState(PlaybackStateCompat.STATE_PLAYING, PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN, 1f)
+                .build(),
+        )
+        ms.isActive = true
+        mediaSession = ms
+    }
+
+    private fun fireMediaButton(action: String) {
+        Log.i(TAG, "media button -> $action")
+        onMediaButton?.invoke(action)
+    }
+
+    private fun buildNotification(): Notification {
+        val openIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val contentPi = PendingIntent.getActivity(
+            this,
+            0,
+            openIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        // Explicit visible button → onStartCommand(ACTION_TOGGLE). The
+        // setMediaSession(token) below additionally wires lock-screen controls.
+        val togglePi = PendingIntent.getService(
+            this,
+            1,
+            Intent(this, VoiceForegroundService::class.java).setAction(ACTION_TOGGLE),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("Voice Agent Bridge")
+            .setContentText("Tap Talk to start/stop a turn.")
+            .setSmallIcon(R.drawable.ic_mic)
+            .setContentIntent(contentPi)
+            .setOngoing(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
+            .addAction(android.R.drawable.ic_media_play, "Talk / Stop", togglePi)
+            .setStyle(
+                MediaNotificationCompat.MediaStyle()
+                    .setMediaSession(mediaSession?.sessionToken)
+                    .setShowActionsInCompactView(0),
+            )
+            .build()
     }
 
     /**
@@ -125,10 +207,20 @@ class VoiceForegroundService : Service() {
         audioFocusRequest = null
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_TOGGLE) {
+            fireMediaButton("toggle")
+        }
+        return START_STICKY
+    }
 
     override fun onDestroy() {
         super.onDestroy()
+        mediaSession?.let {
+            it.isActive = false
+            it.release()
+        }
+        mediaSession = null
         releaseAudioFocus()
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
@@ -158,5 +250,15 @@ class VoiceForegroundService : Service() {
         private const val TAG = "VoiceFgService"
         private const val CHANNEL_ID = "voice_agent_bridge"
         private const val NOTIFICATION_ID = 1
+        const val ACTION_TOGGLE = "com.voiceagentbridge.action.TOGGLE"
+
+        /**
+         * Set by VoiceBridge to relay media-button actions ("toggle" / "next"
+         * / "prev") from earbud taps and the notification control into the web
+         * UI. Same process, so a plain callback suffices; VoiceBridge clears it
+         * on shutdown to avoid retaining the Activity.
+         */
+        @Volatile
+        var onMediaButton: ((String) -> Unit)? = null
     }
 }

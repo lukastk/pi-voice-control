@@ -7,7 +7,7 @@
  * first releases the old dispatch so the worker tears down before a new
  * one is created on the server.
  */
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api.ts";
 import type { VoiceTransport } from "./voice-transport.ts";
 import { WebTransport } from "./web-transport.ts";
@@ -60,6 +60,18 @@ export function useVoice() {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const toastIdRef = useRef(0);
   const transportRef = useRef<VoiceTransport | null>(null);
+  // Refs mirror the current turn mode + live state so the media-button handler
+  // (registered once in wireTransport) reads fresh values rather than a stale
+  // closure. Earbud taps / notification controls map to a mode-aware toggle.
+  const turnModeRef = useRef<"vad" | "manual" | "keyword">("vad");
+  const armedRef = useRef(false);
+  const micMutedRef = useRef(false);
+  useEffect(() => {
+    armedRef.current = armed;
+  }, [armed]);
+  useEffect(() => {
+    micMutedRef.current = micMuted;
+  }, [micMuted]);
 
   const append = useCallback((line: string) => {
     setLog((prev) => [...prev.slice(-99), `${new Date().toLocaleTimeString()}  ${line}`]);
@@ -134,6 +146,25 @@ export function useVoice() {
       transport.on("mic-state", (ev) => {
         setMicMutedState(ev.muted);
       });
+      // Earbud tap / notification media control. "toggle" = start/stop the
+      // current turn, mapped per mode: keyword → arm/commit; manual & vad →
+      // mute/unmute the mic. Reads refs to stay fresh in this once-registered
+      // handler.
+      transport.on("media-button", (ev) => {
+        const t = transportRef.current;
+        if (!t || ev.action !== "toggle") return;
+        if (turnModeRef.current === "keyword") {
+          const action = armedRef.current ? "end" : "start";
+          void t.publishControl(action);
+          append(`earbud → keyword ${action}`);
+        } else {
+          const muted = !micMutedRef.current;
+          void t.setMicMuted(muted);
+          setMicMutedState(muted);
+          micMutedRef.current = muted;
+          append(`earbud → mic ${muted ? "muted" : "unmuted"}`);
+        }
+      });
     },
     [append, pushToast],
   );
@@ -141,6 +172,7 @@ export function useVoice() {
   const connect = useCallback(
     async (socketPath: string, opts: ConnectOptions) => {
       append(`select ${socketPath} (mode=${opts.turnMode}, micEnabled=${opts.micEnabled})`);
+      turnModeRef.current = opts.turnMode;
       setState({ kind: "connecting", socketPath });
       // Initial mute reflects either PTT-default-muted or the master
       // mic-enabled toggle being off.

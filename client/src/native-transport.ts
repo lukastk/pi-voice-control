@@ -209,6 +209,9 @@ export class NativeTransport extends VoiceEventEmitter implements VoiceTransport
       case "mic-state":
         this.emit({ type: "mic-state", muted: env.payload.muted });
         break;
+      case "media-button":
+        this.emit({ type: "media-button", action: env.payload.action });
+        break;
       default:
         console.warn("[NativeTransport] unknown event from bridge", env);
     }
