@@ -112,6 +112,10 @@ export type Config = {
       minSilenceDurationMs: number;    // default 550
       prefixPaddingMs: number;         // Silero's own pre-trigger pad, default 500
     };
+    // Barge-in: when true (default), starting a new turn (keyword arm / PTT
+    // unmute) immediately stops the agent's in-progress TTS and aborts its Pi
+    // turn, so it doesn't talk over you. VAD mode already interrupts on speech.
+    interruptOnTurnStart: boolean;
     // Master mic toggle, orthogonal to turnMode. When false, the mic
     // stays muted regardless of mode (no STT, no agent attention) —
     // useful for short privacy windows without losing your VAD/KW
@@ -190,6 +194,7 @@ export const DEFAULTS: Config = {
       minSilenceDurationMs: 550,
       prefixPaddingMs: 500,
     },
+    interruptOnTurnStart: true,
     micEnabled: true,
     micDeviceId: null,
     androidMicDeviceId: null,

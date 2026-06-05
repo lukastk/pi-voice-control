@@ -79,6 +79,7 @@ export async function dispatchVoiceAgent(opts: {
   turnMode?: TurnMode;
   keywords?: KeywordConfig;
   keywordGating?: KeywordGatingConfig;
+  interruptOnTurnStart?: boolean;
 }): Promise<DispatchResult> {
   const roomName = `voice-${cryptoRandomShort()}`;
   const identity = opts.identity ?? "user";
@@ -93,6 +94,7 @@ export async function dispatchVoiceAgent(opts: {
       turnMode: opts.turnMode,
       keywords: opts.keywords,
       keywordGating: opts.keywordGating,
+      interruptOnTurnStart: opts.interruptOnTurnStart,
     }),
   });
 

@@ -58,6 +58,7 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
   const [gatingMinSpeechMs, setGatingMinSpeechMs] = useState(50);
   const [gatingMinSilenceMs, setGatingMinSilenceMs] = useState(550);
   const [gatingPrefixPaddingMs, setGatingPrefixPaddingMs] = useState(500);
+  const [interruptOnTurnStart, setInterruptOnTurnStart] = useState(true);
   const [micEnabled, setMicEnabled] = useState(true);
   const [micDeviceId, setMicDeviceId] = useState<string | null>(null);
   const [androidMicDeviceId, setAndroidMicDeviceId] = useState<string | null>(null);
@@ -196,6 +197,7 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
     setGatingMinSilenceMs(g?.minSilenceDurationMs ?? 550);
     setGatingPrefixPaddingMs(g?.prefixPaddingMs ?? 500);
     setMicEnabled(config.voice.micEnabled ?? true);
+    setInterruptOnTurnStart(config.voice.interruptOnTurnStart ?? true);
     setMicDeviceId(config.voice.micDeviceId ?? null);
     setAndroidMicDeviceId(config.voice.androidMicDeviceId ?? null);
   }, [config]);
@@ -229,11 +231,12 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
       gatingMinSpeechMs !== (config.voice.keywordGating?.minSpeechDurationMs ?? 50) ||
       gatingMinSilenceMs !== (config.voice.keywordGating?.minSilenceDurationMs ?? 550) ||
       gatingPrefixPaddingMs !== (config.voice.keywordGating?.prefixPaddingMs ?? 500) ||
+      interruptOnTurnStart !== (config.voice.interruptOnTurnStart ?? true) ||
       micEnabled !== (config.voice.micEnabled ?? true) ||
       micDeviceId !== (config.voice.micDeviceId ?? null) ||
       androidMicDeviceId !== (config.voice.androidMicDeviceId ?? null)
     );
-  }, [config, sttProvider, sttModel, sttLanguage, sttVocabulary, ttsProvider, ttsModel, ttsVoice, turnMode, keywordStart, keywordEnd, keywordScrap, keywordRedo, keywordReplay, keywordAbort, keywordThreshold, keywordMaxArmedSeconds, gatingEnabled, gatingPrerollMs, gatingHangoverMs, gatingActivationThreshold, gatingMinSpeechMs, gatingMinSilenceMs, gatingPrefixPaddingMs, micEnabled, micDeviceId, androidMicDeviceId]);
+  }, [config, sttProvider, sttModel, sttLanguage, sttVocabulary, ttsProvider, ttsModel, ttsVoice, turnMode, keywordStart, keywordEnd, keywordScrap, keywordRedo, keywordReplay, keywordAbort, keywordThreshold, keywordMaxArmedSeconds, gatingEnabled, gatingPrerollMs, gatingHangoverMs, gatingActivationThreshold, gatingMinSpeechMs, gatingMinSilenceMs, gatingPrefixPaddingMs, interruptOnTurnStart, micEnabled, micDeviceId, androidMicDeviceId]);
 
   async function save(): Promise<boolean> {
     setError(null);
@@ -284,6 +287,7 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
             minSilenceDurationMs: gatingMinSilenceMs,
             prefixPaddingMs: gatingPrefixPaddingMs,
           },
+          interruptOnTurnStart,
           micEnabled,
           micDeviceId,
           androidMicDeviceId,
@@ -619,6 +623,20 @@ export function SettingsTab({ config, voiceConnected, onReconnect }: Props) {
             You can also cycle through modes on the fly via the <code>VAD</code>/<code>PTT</code>/<code>KW</code> badge in the top bar.
             Switching to or from keyword mode requires a reconnect, since it changes how the agent listens.
           </p>
+        </Field>
+        <Field label="Interrupt on new turn">
+          <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <input
+              type="checkbox"
+              checked={interruptOnTurnStart}
+              onChange={(e) => setInterruptOnTurnStart(e.target.checked)}
+            />
+            <span style={{ fontSize: 13 }}>
+              When you start a new turn (keyword arm / push-to-talk), immediately
+              stop the agent's reply so it doesn't talk over you. (Automatic/VAD
+              mode already interrupts when you start speaking.)
+            </span>
+          </label>
         </Field>
       </Section>
 

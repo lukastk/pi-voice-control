@@ -114,6 +114,7 @@ type JobMetadata = {
   turnMode?: TurnMode;
   keywords?: KeywordConfig;
   keywordGating?: KeywordGatingConfig;
+  interruptOnTurnStart?: boolean;
 };
 
 const DEFAULT_KEYWORD_GATING: KeywordGatingConfig = {
@@ -667,6 +668,9 @@ export default defineAgent({
     setEarconVolume(activeEarcons.volume);
     activeTurnMode = meta.turnMode ?? "vad";
     activeKeywords = { ...DEFAULT_KEYWORDS, ...(meta.keywords ?? {}) };
+    // Barge-in: stop the agent's TTS + Pi turn when the user starts a new turn.
+    // Default true (undefined → on).
+    const interruptOnTurnStart = meta.interruptOnTurnStart !== false;
     logger.info(
       { socketPath: meta.socketPath, earcons: activeEarcons, turnMode: activeTurnMode, keywords: activeKeywords },
       "[worker] entry",
@@ -973,6 +977,9 @@ export default defineAgent({
       switch (action) {
         case "start": {
           if (keywordArmed) return;
+          // Barge-in: stop the agent talking over the new turn (interrupts its
+          // TTS + aborts the Pi turn). Default on; toggle in Settings.
+          if (interruptOnTurnStart) agent.abortCurrent();
           // Discard anything STT accumulated while DISARMED before opening the
           // armed window. In keyword mode turnDetection is "manual", so the
           // framework's audioTranscript is never auto-cleared between turns;
@@ -1073,6 +1080,8 @@ export default defineAgent({
     ctx.room.on(RoomEvent.TrackUnmuted, (_pub, participant) => {
       if (activeTurnMode !== "manual") return;
       if (participant.identity === ctx.room.localParticipant?.identity) return;
+      // Barge-in: cut the agent off when the user starts talking.
+      if (interruptOnTurnStart) agent.abortCurrent();
       diagLog("manual mic unmuted → fresh turn");
       try {
         session.clearUserTurn();

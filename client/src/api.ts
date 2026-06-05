@@ -62,6 +62,8 @@ export type Config = {
       minSilenceDurationMs: number;
       prefixPaddingMs: number;
     };
+    /** Barge-in: stop the agent's reply when a new turn starts. */
+    interruptOnTurnStart?: boolean;
     /** Optional in case server is older than the schema. */
     micEnabled?: boolean;
     micDeviceId?: string | null;

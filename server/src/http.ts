@@ -190,6 +190,7 @@ export function mountApi(app: Hono) {
         turnMode: cfg.voice.turnMode,
         keywords: cfg.voice.keywords,
         keywordGating: cfg.voice.keywordGating,
+        interruptOnTurnStart: cfg.voice.interruptOnTurnStart,
       });
       setCurrentTarget({
         socketPath,
