@@ -28,6 +28,9 @@ export function TestTab({ sttSummary, ttsSummary }: Props) {
   const [transcript, setTranscript] = useState("");
   const [transcribing, setTranscribing] = useState(false);
   const [sttElapsedMs, setSttElapsedMs] = useState<number | null>(null);
+  // Playback of the just-recorded audio so you can hear the capture quality
+  // (distinguishes a bad mic/route from a bad STT of good audio).
+  const [sttAudioUrl, setSttAudioUrl] = useState<string | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -41,12 +44,17 @@ export function TestTab({ sttSummary, ttsSummary }: Props) {
   const [ttsAudioUrl, setTtsAudioUrl] = useState<string | null>(null);
   const [ttsElapsedMs, setTtsElapsedMs] = useState<number | null>(null);
 
-  // Clean up the blob URL when it changes / on unmount.
+  // Clean up the blob URLs when they change / on unmount.
   useEffect(() => {
     return () => {
       if (ttsAudioUrl) URL.revokeObjectURL(ttsAudioUrl);
     };
   }, [ttsAudioUrl]);
+  useEffect(() => {
+    return () => {
+      if (sttAudioUrl) URL.revokeObjectURL(sttAudioUrl);
+    };
+  }, [sttAudioUrl]);
 
   // Best-supported recording mime type for this browser.
   function pickMimeType(): string {
@@ -67,6 +75,10 @@ export function TestTab({ sttSummary, ttsSummary }: Props) {
     setRecError(null);
     setTranscript("");
     setSttElapsedMs(null);
+    if (sttAudioUrl) {
+      URL.revokeObjectURL(sttAudioUrl);
+      setSttAudioUrl(null);
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
@@ -116,6 +128,8 @@ export function TestTab({ sttSummary, ttsSummary }: Props) {
       type: mr?.mimeType || "audio/webm",
     });
     chunksRef.current = [];
+    // Expose the recording for playback so the captured quality is audible.
+    setSttAudioUrl(URL.createObjectURL(blob));
     setTranscribing(true);
     const startedAt = Date.now();
     try {
@@ -187,6 +201,12 @@ export function TestTab({ sttSummary, ttsSummary }: Props) {
             <span style={hintStyle}>round-trip {sttElapsedMs} ms</span>
           )}
         </div>
+        {sttAudioUrl && (
+          <div style={{ marginBottom: 8 }}>
+            <div style={{ ...hintStyle, marginBottom: 4 }}>Recorded audio (listen for capture quality):</div>
+            <audio src={sttAudioUrl} controls style={{ width: "100%" }} />
+          </div>
+        )}
         <textarea
           value={transcript}
           onChange={(e) => setTranscript(e.target.value)}
