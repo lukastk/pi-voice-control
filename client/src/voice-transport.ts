@@ -47,6 +47,10 @@ export interface VoiceTransport {
    *  channel. Used by the keyword-mode action buttons in the top bar
    *  to invoke start/end/scrap/redo/replay/abort without speaking. */
   publishControl(action: string): Promise<void>;
+  /** Android only: tell the wrapper whether a turn is active, so the media
+   *  notification / lock-screen control shows the right play/pause icon.
+   *  No-op on web. */
+  setTurnActive?(active: boolean): void;
   on<E extends VoiceEvent["type"]>(
     type: E,
     handler: VoiceEventHandler<E>,

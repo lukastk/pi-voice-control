@@ -44,6 +44,7 @@ type AndroidVoiceBridge = {
   disconnect(): void;
   setMicMuted(muted: boolean): void;
   publishControl?(action: string): void;
+  setTurnActive?(active: boolean): void;
   /** Returns a JSON-encoded AndroidMicrophone[] string. Synchronous —
    *  binder thread call into native. */
   listMicrophones?(): string;
@@ -160,6 +161,11 @@ export class NativeTransport extends VoiceEventEmitter implements VoiceTransport
   async setMicMuted(muted: boolean): Promise<void> {
     window.AndroidVoiceBridge?.setMicMuted(muted);
     // Bridge fires "mic-state"; voice.ts listener updates React state.
+  }
+
+  setTurnActive(active: boolean): void {
+    // Drives the media-notification play/pause icon. Older wrappers lack it.
+    window.AndroidVoiceBridge?.setTurnActive?.(active);
   }
 
   async publishControl(action: string): Promise<void> {

@@ -107,20 +107,33 @@ class VoiceForegroundService : Service() {
                 return super.onMediaButtonEvent(mediaButtonEvent)
             }
         })
-        // A "playing" state makes us the active media target so hardware media
-        // buttons route here, and tells the lock screen to show a pause control.
-        ms.setPlaybackState(
+        ms.isActive = true
+        mediaSession = ms
+        // Start idle: PAUSED → the system media control shows ▶️ ("start a
+        // turn"). setMediaPlaying(true) flips it to ⏸️ while a turn is active.
+        setMediaPlaying(false)
+    }
+
+    /**
+     * Reflect the live turn state in the media control: PLAYING (⏸️, "stop")
+     * while a turn is active, PAUSED (▶️, "start") while idle. Driven from the
+     * web UI via ACTION_SET_ACTIVE so the icon always matches reality.
+     */
+    private fun setMediaPlaying(playing: Boolean) {
+        mediaSession?.setPlaybackState(
             PlaybackStateCompat.Builder()
                 .setActions(
                     PlaybackStateCompat.ACTION_PLAY_PAUSE or
                         PlaybackStateCompat.ACTION_PLAY or
                         PlaybackStateCompat.ACTION_PAUSE,
                 )
-                .setState(PlaybackStateCompat.STATE_PLAYING, PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN, 1f)
+                .setState(
+                    if (playing) PlaybackStateCompat.STATE_PLAYING else PlaybackStateCompat.STATE_PAUSED,
+                    PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN,
+                    1f,
+                )
                 .build(),
         )
-        ms.isActive = true
-        mediaSession = ms
     }
 
     private fun fireMediaButton(action: String) {
@@ -138,27 +151,21 @@ class VoiceForegroundService : Service() {
             openIntent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        // Explicit visible button → onStartCommand(ACTION_TOGGLE). The
-        // setMediaSession(token) below additionally wires lock-screen controls.
-        val togglePi = PendingIntent.getService(
-            this,
-            1,
-            Intent(this, VoiceForegroundService::class.java).setAction(ACTION_TOGGLE),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
+        // No explicit action button: the single play/pause control is rendered
+        // by the system from the MediaSession's PlaybackState (driven by
+        // setMediaPlaying). Adding our own button as well produced a duplicate,
+        // mis-ordered control.
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Voice Agent Bridge")
-            .setContentText("Tap Talk to start/stop a turn.")
+            .setContentText("Play/pause to start or stop a turn.")
             .setSmallIcon(R.drawable.ic_mic)
             .setContentIntent(contentPi)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
-            .addAction(android.R.drawable.ic_media_play, "Talk / Stop", togglePi)
             .setStyle(
                 MediaNotificationCompat.MediaStyle()
-                    .setMediaSession(mediaSession?.sessionToken)
-                    .setShowActionsInCompactView(0),
+                    .setMediaSession(mediaSession?.sessionToken),
             )
             .build()
     }
@@ -208,8 +215,8 @@ class VoiceForegroundService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_TOGGLE) {
-            fireMediaButton("toggle")
+        if (intent?.action == ACTION_SET_ACTIVE) {
+            setMediaPlaying(intent.getBooleanExtra(EXTRA_ACTIVE, false))
         }
         return START_STICKY
     }
@@ -250,7 +257,8 @@ class VoiceForegroundService : Service() {
         private const val TAG = "VoiceFgService"
         private const val CHANNEL_ID = "voice_agent_bridge"
         private const val NOTIFICATION_ID = 1
-        const val ACTION_TOGGLE = "com.voiceagentbridge.action.TOGGLE"
+        const val ACTION_SET_ACTIVE = "com.voiceagentbridge.action.SET_ACTIVE"
+        const val EXTRA_ACTIVE = "active"
 
         /**
          * Set by VoiceBridge to relay media-button actions ("toggle" / "next"

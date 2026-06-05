@@ -72,6 +72,17 @@ export function useVoice() {
   useEffect(() => {
     micMutedRef.current = micMuted;
   }, [micMuted]);
+  // Push the live turn state to the Android wrapper so its media-notification
+  // play/pause icon matches reality: active = a turn is in progress (keyword →
+  // armed; manual/vad → mic unmuted). No-op on web.
+  useEffect(() => {
+    const t = transportRef.current;
+    if (!t?.setTurnActive) return;
+    const connected = state.kind === "connected";
+    const active =
+      connected && (turnModeRef.current === "keyword" ? armed : !micMuted);
+    t.setTurnActive(active);
+  }, [armed, micMuted, state]);
 
   const append = useCallback((line: string) => {
     setLog((prev) => [...prev.slice(-99), `${new Date().toLocaleTimeString()}  ${line}`]);

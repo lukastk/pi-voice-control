@@ -2,6 +2,7 @@ package com.voiceagentbridge
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Build
@@ -138,6 +139,24 @@ class VoiceBridge(
         scope.launch {
             disposeRoom()
             emit("disconnected", JSONObject().put("reason", "user"))
+        }
+    }
+
+    /**
+     * Tell the foreground service whether a turn is currently active, so its
+     * media notification / lock-screen control shows the right icon (▶️ start
+     * when idle, ⏸️ stop while active). Called by the web UI on state changes.
+     */
+    @JavascriptInterface
+    fun setTurnActive(active: Boolean) {
+        try {
+            activity.startService(
+                Intent(activity, VoiceForegroundService::class.java)
+                    .setAction(VoiceForegroundService.ACTION_SET_ACTIVE)
+                    .putExtra(VoiceForegroundService.EXTRA_ACTIVE, active),
+            )
+        } catch (t: Throwable) {
+            Log.w(TAG, "setTurnActive failed: ${t.message}")
         }
     }
 
