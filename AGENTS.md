@@ -65,7 +65,7 @@ cd android && ./gradlew :app:compileDebugKotlin :app:processDebugResources  # fa
 cd android && ./gradlew assembleDebug                                       # full APK
 
 # Tailscale HTTPS (required for mobile mic)
-bin/tailscale-serve.sh         # Serve 7890, 7880, 7891 over Tailscale HTTPS
+bin/tailscale-serve.sh         # Serve UI on HTTPS 443 (from localhost:7890), plus 7891 (wterm) + 7880 (LiveKit)
 bin/tailscale-serve.sh --off   # Tear down
 ```
 
@@ -88,7 +88,7 @@ Bun HTTP server using Hono. Entry: `server/src/main.ts`. Key modules:
 - `server/src/sessions/` — Pi session discovery via rpc-socket polling; `sesh.ts` enriches sockets with sesh metadata and spawns via `sesh new` (best-effort; `sesh.bin` should be an ABSOLUTE path — under supervisord `~/go/bin` often isn't on PATH)
 - `server/src/livekit.ts` — LiveKit token generation and worker dispatch
 - `server/src/prompt/` — Voice prompt injection (`default.ts`/`file.ts`/`inject.ts`; reads `~/.pi/agent/AGENTS.voice.md`)
-- `server/src/tmux/` — Tmux pane switching (e.g. `focus.ts`)
+- `server/src/tmux/` — Tmux integration (`focus.ts` pane switching, `spawn.ts` spawns a fresh Pi session in a tmux window)
 - `server/src/term/` — wterm (embedded terminal) management
 - `server/src/voice/` — REST clients for the STT/TTS test endpoints (`/api/test/stt`, `/api/test/tts`)
 - `server/src/events/` — SSE event streaming
@@ -170,7 +170,7 @@ User config (turn mode, voice provider/model, keyword phrases, VAD knobs, barge-
 Mobile browsers refuse `getUserMedia` on `http://` for any non-localhost host. `tailscale serve` provides a real cert for your Tailnet hostname:
 
 ```bash
-bin/tailscale-serve.sh         # serves 7890, 7880, 7891 over Tailscale HTTPS
+bin/tailscale-serve.sh         # serves UI on HTTPS 443 (from localhost:7890), plus 7891 (wterm) + 7880 (LiveKit)
 bin/tailscale-serve.sh --off   # tear it all down
 ```
 
